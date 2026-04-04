@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 
 SKILLS_PATHS = [
+    Path(__file__).parent.parent.parent / "skills",
     Path(r"d:\MY_AI\claude-code\superpowers\skills"),
 ]
 

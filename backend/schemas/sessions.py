@@ -51,6 +51,7 @@ class SessionState(BaseModel):
     total_cost_usd: float = 0.0
     working_directory: str = ""
     system_prompt_append: str = ""
+    should_abort: bool = False
 
     def to_info(self) -> SessionInfo:
         """Convert to public-facing SessionInfo."""

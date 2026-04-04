@@ -238,7 +238,21 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
       }
 
       case "error":
-        set({ status: "idle" });
+        // Session was lost (backend restart) — reset so ChatView creates a new one
+        if ((event as { code?: string }).code === "session_not_found") {
+          set({ sessionId: null, status: "idle", messages: [], streamingText: "" });
+        } else {
+          // Show error as a visible assistant message in the chat
+          const errMsg: Message = {
+            role: "assistant",
+            content: `⚠️ ${event.error}`,
+            message_id: `err_${Date.now()}`,
+          };
+          set((s) => ({
+            status: "idle",
+            messages: [...s.messages, errMsg],
+          }));
+        }
         console.error("Server error:", event.error);
         break;
     }

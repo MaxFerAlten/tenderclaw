@@ -17,12 +17,21 @@ from backend.schemas.messages import TokenUsage
 # =============================================================================
 
 
+class WSAttachment(BaseModel):
+    """An attachment (image, file) sent with a message."""
+
+    type: str  # e.g., "image/png", "text/plain"
+    url: str | None = None  # URL or base64 data
+    name: str | None = None
+
+
 class WSUserMessage(BaseModel):
     """User sends a chat message."""
 
     type: Literal["user_message"] = "user_message"
     content: str
     message_id: str = ""
+    attachments: list[WSAttachment] = Field(default_factory=list)
 
 
 class WSToolPermissionResponse(BaseModel):

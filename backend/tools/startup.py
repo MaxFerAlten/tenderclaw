@@ -45,4 +45,21 @@ def register_builtin_tools(registry: ToolRegistry) -> None:
     for tool in tools:
         registry.register(tool)
     
+    _register_mcp_tools(registry)
+    
     logger.info("Registered %d built-in tools", len(tools))
+
+
+def _register_mcp_tools(registry: ToolRegistry) -> None:
+    """Register tools from connected MCP servers."""
+    try:
+        from backend.mcp.bridge import create_mcp_tool_proxies
+        
+        mcp_tools = create_mcp_tool_proxies()
+        for tool in mcp_tools:
+            registry.register(tool)
+        
+        if mcp_tools:
+            logger.info("Registered %d MCP tools", len(mcp_tools))
+    except Exception as exc:
+        logger.warning("Could not register MCP tools: %s", exc)

@@ -34,6 +34,16 @@ class Settings(BaseSettings):
     xai_api_key: str = Field(default="", alias="XAI_API_KEY")
     deepseek_api_key: str = Field(default="", alias="DEEPSEEK_API_KEY")
 
+    # Ollama
+    ollama_base_url: str = "http://localhost:11434/v1"
+
+    # LM Studio
+    lmstudio_base_url: str = "http://localhost:1234/v1"
+
+    # Channel integrations
+    telegram_bot_token: str = Field(default="", alias="TELEGRAM_BOT_TOKEN")
+    discord_token: str = Field(default="", alias="DISCORD_BOT_TOKEN")
+
 
 # Singleton — import this everywhere
 settings = Settings()

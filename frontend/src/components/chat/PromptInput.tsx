@@ -3,7 +3,9 @@
  */
 
 import { useState, useRef, useCallback } from "react";
+import { Square } from "lucide-react";
 import { useSessionStore } from "../../stores/sessionStore";
+import { ws } from "../../api/ws";
 
 interface Props {
   onSend: (content: string) => void;
@@ -23,6 +25,10 @@ export function PromptInput({ onSend }: Props) {
     textareaRef.current?.focus();
   }, [value, isBusy, onSend]);
 
+  const handleStop = useCallback(() => {
+    ws.sendAbort();
+  }, []);
+
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (e.key === "Enter" && !e.shiftKey) {
@@ -35,7 +41,7 @@ export function PromptInput({ onSend }: Props) {
 
   return (
     <div className="border-t border-zinc-800 bg-zinc-950 p-4">
-      <div className="flex items-end gap-3 max-w-4xl mx-auto">
+      <div className="flex items-end gap-3 max-w-3xl mx-auto">
         <textarea
           ref={textareaRef}
           value={value}
@@ -47,13 +53,23 @@ export function PromptInput({ onSend }: Props) {
           className="flex-1 resize-none rounded-xl bg-zinc-900 border border-zinc-700 px-4 py-3 text-sm text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 disabled:opacity-50"
           style={{ minHeight: "44px", maxHeight: "200px" }}
         />
-        <button
-          onClick={handleSubmit}
-          disabled={!value.trim() || isBusy}
-          className="rounded-xl bg-violet-600 hover:bg-violet-500 disabled:bg-zinc-800 disabled:text-zinc-600 px-5 py-3 text-sm font-medium text-white transition-colors"
-        >
-          Send
-        </button>
+        {isBusy ? (
+          <button
+            onClick={handleStop}
+            className="rounded-xl bg-red-600 hover:bg-red-500 px-5 py-3 text-sm font-medium text-white transition-colors flex items-center gap-2"
+          >
+            <Square className="w-4 h-4" />
+            Stop
+          </button>
+        ) : (
+          <button
+            onClick={handleSubmit}
+            disabled={!value.trim()}
+            className="rounded-xl bg-violet-600 hover:bg-violet-500 disabled:bg-zinc-800 disabled:text-zinc-600 px-5 py-3 text-sm font-medium text-white transition-colors"
+          >
+            Send
+          </button>
+        )}
       </div>
     </div>
   );

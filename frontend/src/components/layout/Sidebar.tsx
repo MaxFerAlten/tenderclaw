@@ -2,6 +2,8 @@
  * Sidebar — session list, agent status, and navigation.
  */
 
+import { Link } from "react-router-dom";
+import { Settings, ChevronRight } from "lucide-react";
 import { useSessionStore } from "../../stores/sessionStore";
 
 export function Sidebar() {
@@ -35,9 +37,21 @@ export function Sidebar() {
         )}
       </div>
 
+      {/* Settings Link */}
+      <div className="px-3 py-2 border-t border-zinc-800">
+        <Link
+          to="/settings"
+          className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 transition-colors"
+        >
+          <Settings className="w-4 h-4" />
+          <span className="text-sm">Settings</span>
+          <ChevronRight className="w-4 h-4 ml-auto" />
+        </Link>
+      </div>
+
       {/* Footer */}
       <div className="px-4 py-3 border-t border-zinc-800">
-        <div className="text-xs text-zinc-600">v0.1.0 — Phase 1</div>
+        <div className="text-xs text-zinc-600">v0.1.0 — Phase 5</div>
       </div>
     </aside>
   );

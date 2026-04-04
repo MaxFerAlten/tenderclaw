@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response
 
 from backend.schemas.sessions import SessionCreate, SessionInfo
 from backend.services.session_store import session_store
@@ -39,8 +39,8 @@ async def get_session(session_id: str) -> SessionInfo:
     return state.to_info()
 
 
-@router.delete("/{session_id}", status_code=204)
-async def delete_session(session_id: str) -> None:
+@router.delete("/{session_id}")
+async def delete_session(session_id: str) -> Response:
     """Delete a session."""
     try:
         session_store.get(session_id)
@@ -48,3 +48,4 @@ async def delete_session(session_id: str) -> None:
         raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
     session_store.delete(session_id)
     logger.info("Deleted session %s", session_id)
+    return Response(status_code=204)

@@ -1,17 +1,15 @@
-"""Base tool interface — every tool inherits from BaseTool.
-
-Inspired by Claude Code's Tool.ts but cleaner: factory pattern, Pydantic validation,
-no god-file. Each tool is a self-contained module.
-"""
+"""Base tool interface — every tool inherits from BaseTool."""
 
 from __future__ import annotations
 
 import abc
-from typing import Any, Callable, Awaitable
+from typing import Any, Awaitable, Callable
 
 from pydantic import BaseModel
 
 from backend.schemas.tools import RiskLevel, ToolResult, ToolSpec
+
+SendFn = Callable[[dict[str, Any]], Awaitable[None]]
 
 
 class ToolContext(BaseModel):
@@ -21,11 +19,10 @@ class ToolContext(BaseModel):
     working_directory: str = "."
     message_id: str = ""
     tool_use_id: str = ""
-    on_progress: Any = None
-    send: Any = None  # SendFn (WebSocket)
+    on_progress: SendFn | None = None
+    send: SendFn | None = None
 
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = {"arbitrary_types_allowed": True}
 
 
 class BaseTool(abc.ABC):

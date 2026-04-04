@@ -1,6 +1,6 @@
 /**
  * WebSocket client for real-time agent communication.
- * Handles connection, reconnection, and typed message dispatch.
+ * Handles connection, reconnection, keepalive, and typed message dispatch.
  */
 
 import type { WSServerEvent } from "./types";
@@ -10,6 +10,7 @@ type StatusHandler = (status: "connecting" | "connected" | "disconnected") => vo
 
 const RECONNECT_DELAY_MS = 2000;
 const MAX_RECONNECT_ATTEMPTS = 10;
+const PING_INTERVAL_MS = 15000;
 
 export class TenderClawWS {
   private ws: WebSocket | null = null;
@@ -18,6 +19,7 @@ export class TenderClawWS {
   private statusHandlers: StatusHandler[] = [];
   private reconnectAttempts = 0;
   private shouldReconnect = true;
+  private pingInterval: ReturnType<typeof setInterval> | null = null;
 
   connect(sessionId: string): void {
     this.sessionId = sessionId;
@@ -28,8 +30,13 @@ export class TenderClawWS {
 
   disconnect(): void {
     this.shouldReconnect = false;
+    this.clearPing();
     this.ws?.close();
     this.ws = null;
+  }
+
+  isDisconnected(): boolean {
+    return !this.ws || this.ws.readyState === WebSocket.CLOSED || this.ws.readyState === WebSocket.CLOSING;
   }
 
   send(message: Record<string, unknown>): void {
@@ -40,6 +47,10 @@ export class TenderClawWS {
 
   sendUserMessage(content: string): void {
     this.send({ type: "user_message", content });
+  }
+
+  sendSessionConfig(model: string): void {
+    this.send({ type: "session_config", model });
   }
 
   sendAbort(): void {
@@ -64,6 +75,13 @@ export class TenderClawWS {
     };
   }
 
+  private clearPing(): void {
+    if (this.pingInterval !== null) {
+      clearInterval(this.pingInterval);
+      this.pingInterval = null;
+    }
+  }
+
   private doConnect(): void {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const host = window.location.host;
@@ -75,11 +93,24 @@ export class TenderClawWS {
     this.ws.onopen = () => {
       this.reconnectAttempts = 0;
       this.emitStatus("connected");
+      // Keepalive: prevent browser from closing idle WS connections
+      this.pingInterval = setInterval(() => {
+        if (this.ws?.readyState === WebSocket.OPEN) {
+          this.ws.send(JSON.stringify({ type: "ping" }));
+        }
+      }, PING_INTERVAL_MS);
     };
 
     this.ws.onmessage = (ev) => {
       try {
         const event = JSON.parse(ev.data) as WSServerEvent;
+        // Session lost (backend restart) — reset store so ChatView creates a new session
+        if (event.type === "error" && (event as { code?: string }).code === "session_not_found") {
+          this.shouldReconnect = false;
+          this.handlers.forEach((h) => h(event));
+          this.ws?.close();
+          return;
+        }
         this.handlers.forEach((h) => h(event));
       } catch {
         console.error("Failed to parse WS message:", ev.data);
@@ -87,6 +118,7 @@ export class TenderClawWS {
     };
 
     this.ws.onclose = () => {
+      this.clearPing();
       this.emitStatus("disconnected");
       if (this.shouldReconnect && this.reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
         this.reconnectAttempts++;

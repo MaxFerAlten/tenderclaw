@@ -34,18 +34,23 @@ PROVIDER_MAP: dict[str, str] = {
     "gemini": "google",
     "grok": "xai",
     "deepseek": "deepseek",
-    "llama": "ollama",
-    "qwen": "ollama",
+    "lmstudio": "lmstudio",
+    "lm-studio": "lmstudio",
     "mistral": "ollama",
     "codellama": "ollama",
     "phi": "ollama",
+    "qwen": "ollama",
     "gemma": "ollama",
+    "llama": "ollama",
 }
 
 
 def detect_provider(model: str) -> str:
     """Detect the provider from a model name."""
     model_lower = model.lower()
+    # LM Studio uses namespaced models like "qwen/qwen3.5-9b"
+    if "/" in model:
+        return "lmstudio"
     for prefix, provider in PROVIDER_MAP.items():
         if prefix in model_lower:
             return provider
@@ -58,12 +63,18 @@ class ModelRouter:
     def __init__(self) -> None:
         self._providers: dict[str, BaseProvider] = {}
 
-    def _get_provider(self, name: str) -> BaseProvider:
+    def _get_provider(self, name: str, config: dict[str, Any] | None = None) -> BaseProvider:
         """Lazy-init a provider by name."""
+        # For Ollama/LM Studio, always recreate to use new URL
+        if name in ("ollama", "lmstudio"):
+            provider = _create_provider(name, config)
+            self._providers[name] = provider
+            return provider
+        
         if name in self._providers:
             return self._providers[name]
 
-        provider = _create_provider(name)
+        provider = _create_provider(name, config)
         self._providers[name] = provider
         logger.info("Provider initialized: %s", name)
         return provider
@@ -75,19 +86,54 @@ class ModelRouter:
         system: str = "",
         tools: list[dict[str, Any]] | None = None,
         max_tokens: int = 16384,
+        config: dict[str, Any] | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         """Route a streaming message request to the appropriate provider."""
         provider_name = detect_provider(model)
-        provider = self._get_provider(provider_name)
+        provider = self._get_provider(provider_name, config)
 
-        async for event in provider.stream(
+        try:
+            async for event in provider.stream(
             model=model,
             messages=messages,
             system=system,
             tools=tools,
             max_tokens=max_tokens,
-        ):
-            yield event
+            ):
+                yield event
+        except ProviderError as exc:
+            # Fallback to a cloud provider only when explicitly allowed via config
+            if provider_name in ("ollama", "lmstudio"):
+                from backend.config import settings
+                # Only fall back if no_fallback flag is absent in config
+                no_fallback = config.get("no_fallback", False) if config else False
+                if not no_fallback:
+                    fallback_name = None
+                    if settings.anthropic_api_key:
+                        fallback_name = "anthropic"
+                    elif settings.openai_api_key:
+                        fallback_name = "openai"
+                    if fallback_name:
+                        logger.warning(
+                            "%s unreachable (%s); falling back to %s. "
+                            "Pass no_fallback=true in config to disable this.",
+                            provider_name, exc, fallback_name,
+                        )
+                        try:
+                            fallback = self._get_provider(fallback_name)
+                            async for event in fallback.stream(
+                                model=model,
+                                messages=messages,
+                                system=system,
+                                tools=tools,
+                                max_tokens=max_tokens,
+                            ):
+                                yield event
+                            return
+                        except Exception as inner:
+                            logger.error("Fallback provider %s failed: %s", fallback_name, inner)
+                            raise
+            raise
 
     async def generate_message(
         self,
@@ -123,7 +169,7 @@ class ModelRouter:
         return list(PROVIDER_MAP.values())
 
 
-def _create_provider(name: str) -> BaseProvider:
+def _create_provider(name: str, config: dict[str, Any] | None = None) -> BaseProvider:
     """Factory function — create a provider instance by name."""
     if name == "anthropic":
         from backend.services.anthropic_client import AnthropicClient
@@ -142,7 +188,12 @@ def _create_provider(name: str) -> BaseProvider:
         return XAIProvider()
     if name == "ollama":
         from backend.services.providers.ollama_provider import OllamaProvider
-        return OllamaProvider()
+        url = config.get("ollama_url") if config else None
+        return OllamaProvider(base_url=url)
+    if name == "lmstudio":
+        from backend.services.providers.lmstudio_provider import LMStudioProvider
+        url = config.get("lmstudio_url") if config else None
+        return LMStudioProvider(base_url=url)
 
     raise ProviderError(f"Unknown provider: {name}")
 

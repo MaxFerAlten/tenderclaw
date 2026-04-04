@@ -42,7 +42,6 @@ async def websocket_endpoint(ws: WebSocket, session_id: str) -> None:
     logger.info("WS connected: %s", session_id)
 
     async def send(msg: dict[str, Any]) -> None:
-        """Send a JSON message to the WebSocket client."""
         await ws.send_json(msg)
 
     try:
@@ -55,21 +54,32 @@ async def websocket_endpoint(ws: WebSocket, session_id: str) -> None:
                 if session.status == SessionStatus.BUSY:
                     await send(WSError(error="Session is busy", code="session_busy").model_dump())
                     continue
+
+                # Handle image attachments via Looker agent
+                attachments = raw.get("attachments", [])
+                image_attachments = [a for a in attachments if a.get("type", "").startswith("image/")]
+                if image_attachments:
+                    await _handle_image_message(session, msg.content, image_attachments, send)
+                    continue
+
                 await run_conversation_turn(session, msg.content, send)
 
             elif msg_type == "abort":
                 msg_abort = WSAbort.model_validate(raw)
                 logger.info("Abort requested: %s (reason=%s)", session_id, msg_abort.reason)
+                session.should_abort = True
                 session.status = SessionStatus.IDLE
+                await send({"type": "turn_end", "stop_reason": "aborted", "usage": {}})
 
             elif msg_type == "tool_permission_response":
-                _perm = WSToolPermissionResponse.model_validate(raw)
+                perm = WSToolPermissionResponse.model_validate(raw)
                 logger.info(
                     "Permission response: tool_use_id=%s decision=%s",
-                    _perm.tool_use_id,
-                    _perm.decision,
+                    perm.tool_use_id,
+                    perm.decision,
                 )
-                # TODO: feed decision into the permission gate in conversation loop
+                # Resolve the pending permission gate in the conversation loop
+                session.resolve_permission(perm.tool_use_id, perm.decision)
 
             elif msg_type == "session_config":
                 cfg = WSSessionConfig.model_validate(raw)
@@ -77,17 +87,49 @@ async def websocket_endpoint(ws: WebSocket, session_id: str) -> None:
                     session.model = cfg.model
                     logger.info("Session %s model updated to %s", session_id, cfg.model)
                 if cfg.permission_mode is not None:
+                    session.model_config["permission_mode"] = cfg.permission_mode
                     logger.info("Session %s permission mode: %s", session_id, cfg.permission_mode)
+
+            elif msg_type == "ping":
+                await send({"type": "pong"})
 
             else:
                 await send(WSError(error=f"Unknown message type: {msg_type}", code="unknown_type").model_dump())
-
     except WebSocketDisconnect:
         logger.info("WS disconnected: %s", session_id)
     except Exception as exc:
-        logger.error("WS error for %s: %s", session_id, exc)
+        logger.error("WS error for %s: %s", session_id, exc, exc_info=True)
         try:
             await ws.send_json(WSError(error=str(exc)).model_dump())
+        except Exception:
+            pass
+        try:
             await ws.close(code=1011, reason="internal_error")
         except Exception:
             pass
+
+
+async def _handle_image_message(
+    session: Any,
+    text: str,
+    image_attachments: list[dict],
+    send: Any,
+) -> None:
+    """Route image messages to the Looker agent."""
+    from backend.core.conversation import run_conversation_turn
+
+    # Build a content string that includes image references for the Looker agent
+    image_refs = "\n".join(
+        f"[Image: {a.get('name', 'attachment')} ({a.get('type', 'image')})]"
+        + (f" URL: {a['url']}" if a.get("url") else "")
+        for a in image_attachments
+    )
+    combined = f"{text}\n\n{image_refs}".strip() if text else image_refs
+
+    # Temporarily switch to looker agent for this turn
+    original_model = session.model
+    session.model_config["agent_override"] = "looker"
+    try:
+        await run_conversation_turn(session, combined, send)
+    finally:
+        session.model_config.pop("agent_override", None)

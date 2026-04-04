@@ -10,6 +10,8 @@ from backend.api.tools_api import router as tools_router
 from backend.api.ws import router as ws_router
 from backend.api.gateway import router as gateway_router
 from backend.api.channels import router as channels_router
+from backend.api.diagnostics import router as diagnostics_router
+from backend.api.config import router as config_router
 
 api_router = APIRouter()
 
@@ -17,5 +19,7 @@ api_router.include_router(health_router, tags=["health"])
 api_router.include_router(sessions_router, prefix="/sessions", tags=["sessions"])
 api_router.include_router(tools_router, prefix="/tools", tags=["tools"])
 api_router.include_router(ws_router, tags=["websocket"])
-api_router.include_router(gateway_router, tags=["openai-compat"])
+api_router.include_router(gateway_router, prefix="/v1", tags=["openai-compat"])
 api_router.include_router(channels_router, tags=["channels"])
+api_router.include_router(diagnostics_router, prefix="/diagnostics", tags=["diagnostics"])
+api_router.include_router(config_router, tags=["config"])

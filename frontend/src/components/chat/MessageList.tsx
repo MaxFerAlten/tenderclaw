@@ -19,34 +19,36 @@ export function MessageList() {
   }, [messages.length, streamingText]);
 
   return (
-    <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
-      {messages.length === 0 && !streamingText && (
-        <div className="flex items-center justify-center h-full">
-          <div className="text-center">
-            <h2 className="text-2xl font-bold text-zinc-400 mb-2">
-              TenderClaw
-            </h2>
-            <p className="text-zinc-600 text-sm max-w-md">
-              Multi-agent, multi-model AI coding assistant.
-              Type a message to begin.
-            </p>
+    <div className="flex-1 overflow-y-auto">
+      <div className="max-w-3xl mx-auto px-4 py-4 space-y-4">
+        {messages.length === 0 && !streamingText && (
+          <div className="flex items-center justify-center h-full min-h-[50vh]">
+            <div className="text-center">
+              <h2 className="text-2xl font-bold text-zinc-400 mb-2">
+                TenderClaw
+              </h2>
+              <p className="text-zinc-600 text-sm max-w-md">
+                Multi-agent, multi-model AI coding assistant.
+                Type a message to begin.
+              </p>
+            </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {messages.map((msg) => (
-        <MessageBubble key={msg.message_id} message={msg} />
-      ))}
+        {messages.map((msg) => (
+          <MessageBubble key={msg.message_id} message={msg} />
+        ))}
 
-      {streamingText && <StreamingText text={streamingText} />}
+        {streamingText && <StreamingText text={streamingText} />}
 
-      {status === "busy" && !streamingText && (
-        <div className="flex items-center gap-2 text-zinc-500 text-sm">
-          <span className="animate-pulse">Thinking...</span>
-        </div>
-      )}
+        {status === "busy" && !streamingText && (
+          <div className="flex items-center gap-2 text-zinc-500 text-sm">
+            <span className="animate-pulse">Thinking...</span>
+          </div>
+        )}
 
-      <div ref={bottomRef} />
+        <div ref={bottomRef} />
+      </div>
     </div>
   );
 }

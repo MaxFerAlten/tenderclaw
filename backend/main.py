@@ -20,7 +20,9 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.api.router import api_router
+from backend.api.channels import router as channels_router
 from backend.config import settings
+from backend.plugins.base import plugin_loader
 from backend.services.session_store import session_store
 from backend.tools.registry import tool_registry
 from backend.tools.startup import register_builtin_tools
@@ -36,6 +38,13 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     """Application startup / shutdown lifecycle."""
     setup_logging(settings.log_level)
     register_builtin_tools(tool_registry)
+    
+    # Initialize plugins
+    _init_plugins()
+    
+    # Initialize channels (Telegram, Discord, etc.)
+    _init_channels()
+    
     logger.info(
         "TenderClaw started — http://%s:%d/tenderclaw",
         settings.host,
@@ -43,7 +52,43 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     )
     yield
     await session_store.close_all()
+    await _shutdown_channels()
     logger.info("TenderClaw stopped")
+
+
+def _init_plugins() -> None:
+    """Initialize plugin system."""
+    from backend.agents.registry import agent_registry
+    from backend.plugins.superpowers import SuperpowersPlugin
+    
+    # Load built-in plugins
+    try:
+        plugin_loader.load_plugin(SuperpowersPlugin())
+        plugin_loader.register_all(tool_registry, agent_registry)
+        logger.info("Loaded %d plugins", len(plugin_loader._plugins))
+    except FileNotFoundError:
+        logger.warning("Superpowers plugin not found, skipping")
+
+
+def _init_channels() -> None:
+    """Initialize channel integrations (Telegram, Discord)."""
+    from backend.api import channels
+    
+    if settings.telegram_bot_token:
+        channels.telegram_manager.start()
+        logger.info("Telegram channel initialized")
+    
+    if settings.discord_token:
+        channels.discord_manager.start()
+        logger.info("Discord channel initialized")
+
+
+async def _shutdown_channels() -> None:
+    """Shutdown all channel integrations."""
+    from backend.api import channels
+    
+    await channels.telegram_manager.stop()
+    await channels.discord_manager.stop()
 
 
 def create_app() -> FastAPI:

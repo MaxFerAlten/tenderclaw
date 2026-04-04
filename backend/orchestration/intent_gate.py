@@ -1,56 +1,65 @@
-"""Intent Gate — classify user intent to route to the correct pipeline.
-
-Analyzes the prompt to determine if it's research, implementation,
-bug fixing, or planning.
-"""
+"""Intent Gate — classify user intent to route to the correct pipeline."""
 
 from __future__ import annotations
 
 import logging
 from enum import Enum
-from typing import Any
 
 from backend.services.model_router import model_router
 
 logger = logging.getLogger("tenderclaw.orchestration.intent_gate")
 
+# Fast/cheap model for classification — prefer a small model if available,
+# fall back to whatever the router can reach.
+_CLASSIFIER_MODEL = "claude-haiku-4-20250514"
+
+_SYSTEM = """You are the TenderClaw Intent Gate.
+Classify the user's coding request into ONE of these categories:
+- research: understand code or search for information
+- implement: write or change code
+- fix: debug or repair a bug
+- plan: design a new feature or architecture
+- review: audit or critique existing code
+- chat: general conversation not requiring code changes
+
+Reply with ONLY the category name in lowercase."""
+
 
 class Intent(str, Enum):
-    """Broad categories for user requests."""
-
-    RESEARCH = "research"      # Explore codebase or web
-    IMPLEMENT = "implement"    # Write feature code
-    FIX = "fix"                # Debug and repair
-    PLAN = "plan"              # Design/Architect
-    REVIEW = "review"          # Critique/Audit
-    CHAT = "chat"              # General interaction
+    RESEARCH = "research"
+    IMPLEMENT = "implement"
+    FIX = "fix"
+    PLAN = "plan"
+    REVIEW = "review"
+    CHAT = "chat"
 
 
-async def classify_intent(prompt: str) -> Intent:
-    """Classify user's prompt into a specific Intent."""
-    system = """You are the **TenderClaw Intent Gate**.
-Your job is to classify the user's coding request into ONE category:
-- **research**: The user wants to understand code or search for information.
-- **implement**: The user wants you to write or change code.
-- **fix**: The user has an error or bug that needs fixing.
-- **plan**: The user wants to design a new feature or architect a project.
-- **review**: The user wants an audit or critique of existing code.
-- **chat**: General conversation or questions not requiring code changes.
+async def classify_intent(prompt: str, session_model: str = "") -> Intent:
+    """Classify user prompt into an Intent using a fast model.
 
-Return ONLY the single category name in lowercase. No explanation."""
+    Uses the cheapest available provider. Skips if no cloud key is configured.
+    """
+    from backend.config import settings
 
-    messages = [{"role": "user", "content": prompt}]
-    
+    # Pick classifier model based on available keys
+    if settings.anthropic_api_key:
+        classifier_model = "claude-haiku-4-20250514"
+    elif settings.openai_api_key:
+        classifier_model = "gpt-4o-mini"
+    else:
+        # Local-only setup — skip classification entirely
+        return Intent.IMPLEMENT
+
     try:
-        response = await model_router.generate_message(
-            model="gpt-4o-mini", # Use a fast/cheap model for classification
-            messages=messages,
-            system=system,
+        result = await model_router.generate_message(
+            model=classifier_model,
+            messages=[{"role": "user", "content": prompt}],
+            system=_SYSTEM,
         )
-        prediction = response.content.strip().lower()
-        if prediction in [i.value for i in Intent]:
+        prediction = result.content.strip().lower()
+        if prediction in Intent._value2member_map_:
             return Intent(prediction)
     except Exception as exc:
-        logger.error("Intent classification failed: %s", exc)
+        logger.warning("Intent classification failed (%s), defaulting to implement", exc)
 
-    return Intent.IMPLEMENT # Default to implementation
+    return Intent.IMPLEMENT

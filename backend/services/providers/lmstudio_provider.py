@@ -1,6 +1,6 @@
-"""Ollama provider — local models (Llama, Qwen, Mistral, CodeLlama, etc.).
+"""LM Studio provider — local models via LM Studio.
 
-Uses the OpenAI-compatible API that Ollama exposes at localhost:11434.
+Uses the OpenAI-compatible API that LM Studio exposes at localhost:1234.
 """
 
 from __future__ import annotations
@@ -16,18 +16,17 @@ from backend.schemas.messages import TokenUsage
 from backend.services.providers.base import BaseProvider
 from backend.utils.errors import ProviderError
 
-logger = logging.getLogger("tenderclaw.providers.ollama")
+logger = logging.getLogger("tenderclaw.providers.lmstudio")
 
 
-class OllamaProvider(BaseProvider):
-    """Provider for local Ollama models."""
+class LMStudioProvider(BaseProvider):
+    """Provider for local LM Studio models."""
 
-    name = "ollama"
-    models = ["llama", "qwen", "mistral", "codellama", "deepseek-coder", "phi", "gemma", "mixtral", "deepseek"]
+    name = "lmstudio"
+    models = ["lmstudio"]
 
     def __init__(self, base_url: str | None = None) -> None:
-        # Ollama uses OpenAI-compatible API at /v1/chat/completions
-        url = base_url or settings.ollama_base_url
+        url = base_url or settings.lmstudio_base_url
         if not url.endswith("/v1"):
             url = url.rstrip("/") + "/v1"
         self._base_url = url
@@ -39,8 +38,8 @@ class OllamaProvider(BaseProvider):
                     self._healthy = True
         except Exception:
             self._healthy = False
-        self._client = AsyncOpenAI(api_key="ollama", base_url=self._base_url)
-        logger.info("Ollama provider initialized with base_url: %s", self._base_url)
+        self._client = AsyncOpenAI(api_key="lm-studio", base_url=self._base_url)
+        logger.info("LM Studio provider initialized with base_url: %s", self._base_url)
 
     async def stream(
         self,
@@ -50,7 +49,7 @@ class OllamaProvider(BaseProvider):
         tools: list[dict[str, Any]] | None = None,
         max_tokens: int = 16384,
     ) -> AsyncIterator[dict[str, Any]]:
-        """Stream completion from local Ollama instance."""
+        """Stream completion from LM Studio."""
         oai_messages: list[dict[str, Any]] = []
         if system:
             oai_messages.append({"role": "system", "content": system})
@@ -61,7 +60,7 @@ class OllamaProvider(BaseProvider):
             })
 
         if not getattr(self, "_healthy", True):
-            raise ProviderError(f"Ollama not healthy or not reachable at {self._base_url}")
+            raise ProviderError(f"LM Studio not healthy or not reachable at {self._base_url}")
 
         try:
             stream = await self._client.chat.completions.create(
@@ -76,22 +75,32 @@ class OllamaProvider(BaseProvider):
                 if not choice:
                     continue
                 delta = choice.delta
-                if delta and delta.content:
+                # LM Studio may return empty content but use reasoning_content
+                content = delta.content if delta else ""
+                reasoning = getattr(delta, "reasoning_content", None) if delta else None
+                
+                if content:
                     yield {
                         "type": "content_block_delta",
                         "index": 0,
-                        "delta": {"type": "text_delta", "text": delta.content},
+                        "delta": {"type": "text_delta", "text": content},
+                    }
+                elif reasoning:
+                    yield {
+                        "type": "content_block_delta",
+                        "index": 0,
+                        "delta": {"type": "text_delta", "text": reasoning},
                     }
                 if choice.finish_reason:
                     yield {
                         "type": "message_delta",
-                        "delta": {"stop_reason": "end_turn"},
+                        "delta": {"stop_reason": choice.finish_reason},
                     }
 
             yield {"type": "usage", "usage": TokenUsage()}
 
         except Exception as exc:
-            logger.error("Ollama error: %s", exc)
+            logger.error("LM Studio error: %s", exc)
             raise ProviderError(
-                f"Ollama error: {exc}. Is Ollama running at {settings.ollama_base_url}?"
+                f"LM Studio error: {exc}. Is LM Studio running at {settings.lmstudio_base_url}?"
             ) from exc

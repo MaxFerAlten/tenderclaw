@@ -3,7 +3,7 @@
  * The primary interaction surface for TenderClaw.
  */
 
-import { useEffect, useCallback } from "react";
+import { useEffect, useCallback, useRef } from "react";
 import { MessageList } from "./MessageList";
 import { PromptInput } from "./PromptInput";
 import { useSessionStore } from "../../stores/sessionStore";
@@ -17,21 +17,39 @@ export function ChatView() {
   const handleServerEvent = useSessionStore((s) => s.handleServerEvent);
   const setWsStatus = useSessionStore((s) => s.setWsStatus);
 
-  // Create session and connect WebSocket on mount
+  // Stable refs so the effect never re-runs due to store function identity changes
+  const handleServerEventRef = useRef(handleServerEvent);
+  const setWsStatusRef = useRef(setWsStatus);
+  handleServerEventRef.current = handleServerEvent;
+  setWsStatusRef.current = setWsStatus;
+
+  const mountedRef = useRef(true);
+
   useEffect(() => {
-    if (sessionId) return;
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (sessionId) {
+      // Session exists — ensure WS is connected
+      if (ws.isDisconnected()) {
+        ws.connect(sessionId);
+      }
+      return;
+    }
 
     const init = async () => {
       try {
-        const res = await api.sessions.create({
-          working_directory: ".",
-        });
-        setSession(res.session_id, "claude-sonnet-4-20250514");
-
-        // Connect WebSocket
+        const savedModel = localStorage.getItem("tenderclaw_model") || "claude-sonnet-4-20250514";
+        const res = await api.sessions.create({ working_directory: ".", model: savedModel });
+        if (!mountedRef.current) return;
+        setSession(res.session_id, savedModel);
         ws.connect(res.session_id);
-        ws.onEvent(handleServerEvent);
-        ws.onStatus(setWsStatus);
+        ws.onEvent((e) => handleServerEventRef.current(e));
+        ws.onStatus((s) => setWsStatusRef.current(s));
       } catch (err) {
         console.error("Failed to create session:", err);
       }
@@ -40,9 +58,12 @@ export function ChatView() {
     init();
 
     return () => {
-      ws.disconnect();
+      if (!mountedRef.current) {
+        ws.disconnect();
+      }
     };
-  }, [sessionId, setSession, handleServerEvent, setWsStatus]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId]);
 
   const handleSend = useCallback(
     (content: string) => {
