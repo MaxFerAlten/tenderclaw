@@ -56,6 +56,34 @@ class SessionData:
     def get_api_key(self, provider: str) -> str | None:
         return self.api_keys.get(provider) or None
 
+    @classmethod
+    def from_dict(cls, data: dict) -> "SessionData":
+        """Create SessionData from serialized disk data."""
+        created_at = data.get("created_at")
+        if isinstance(created_at, str):
+            try:
+                created_at = datetime.fromisoformat(created_at)
+            except Exception:
+                created_at = datetime.utcnow()
+        else:
+            created_at = datetime.utcnow()
+        messages = data.get("messages", []) if isinstance(data.get("messages"), list) else []
+        return cls(
+            session_id=data.get("session_id", ""),
+            status=SessionStatus(data.get("status", SessionStatus.IDLE.value)),
+            model=data.get("model", ""),
+            created_at=created_at,
+            messages=messages,
+            total_usage_input=data.get("total_usage_input", 0),
+            total_usage_output=data.get("total_usage_output", 0),
+            total_cost_usd=data.get("total_cost_usd", 0.0),
+            working_directory=data.get("working_directory", "."),
+            system_prompt_append=data.get("system_prompt_append", ""),
+            should_abort=data.get("should_abort", False),
+            model_config=data.get("model_config", {}),
+            api_keys=data.get("api_keys", {}),
+        )
+
     # --- Permission gate helpers ---
 
     def register_permission_request(self, tool_use_id: str) -> asyncio.Event:
@@ -107,7 +135,19 @@ class SessionStore:
         """Get session state by ID. Raises SessionNotFoundError if missing."""
         state = self._sessions.get(session_id)
         if state is None:
-            raise SessionNotFoundError(f"Session not found: {session_id}")
+            path = STATE_DIR / f"{session_id}.json"
+            if path.exists():
+                try:
+                    with open(path, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                    state = SessionData.from_dict(data)  # type: ignore[attr-defined]
+                    self._sessions[session_id] = state
+                    logger.info("Session loaded from disk: %s", session_id)
+                except Exception as exc:
+                    logger.error("Failed to load session %s from disk: %s", session_id, exc)
+                    raise SessionNotFoundError(f"Session not found: {session_id}")
+            else:
+                raise SessionNotFoundError(f"Session not found: {session_id}")
         return state
 
     def list_sessions(self) -> list[SessionData]:
