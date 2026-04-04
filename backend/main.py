@@ -49,6 +49,12 @@ FRONTEND_DIST = Path(__file__).parent.parent / "frontend" / "dist"
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     """Application startup / shutdown lifecycle."""
     setup_logging(settings.log_level)
+    # Load persisted sessions into memory at startup (Wave 2 readiness)
+    try:
+        session_store.load_all_from_disk()
+        logger.info("Persisted sessions loaded at startup (Wave 2 readiness)")
+    except Exception as _exc:
+        logger.warning("Failed to load persisted sessions at startup: %s", _exc)
     register_builtin_tools(tool_registry)
     
     # Initialize plugins
