@@ -190,6 +190,23 @@ class SessionStore:
         except Exception as exc:
             logger.exception("Failed to persist session %s: %s", state.session_id, exc)
 
+    def load_all_from_disk(self) -> None:
+        """Load all persisted sessions from disk into memory (Wave 2 readiness)."""
+        if not STATE_DIR.exists():
+            return
+        for f in STATE_DIR.glob("*.json"):
+            try:
+                with open(f, 'r', encoding='utf-8') as fh:
+                    data = json.load(fh)
+                sid = data.get("session_id") or f.stem
+                if sid in self._sessions:
+                    continue
+                obj = SessionData.from_dict(data)  # type: ignore[attr-defined]
+                self._sessions[sid] = obj
+                logger.info("Loaded persisted session %s from disk", sid)
+            except Exception as exc:
+                logger.warning("Failed to load persisted session %s: %s", f, exc)
+
 
 # Module-level instance
 session_store = SessionStore()
