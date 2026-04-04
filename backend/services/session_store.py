@@ -100,6 +100,7 @@ class SessionStore:
         )
         self._sessions[session_id] = state
         logger.info("Session created: %s (model=%s)", session_id, state.model)
+        self._persist_session(state)
         return state
 
     def get(self, session_id: str) -> SessionData:
@@ -123,6 +124,31 @@ class SessionStore:
         count = len(self._sessions)
         self._sessions.clear()
         logger.info("Closed %d sessions", count)
+
+    def _persist_session(self, state: SessionData) -> None:
+        """Persist a minimal snapshot of session state to disk (Wave 1).
+        This is intentionally lightweight to avoid coupling with full in-memory history.
+        """
+        try:
+            _path = STATE_DIR / f"{state.session_id}.json"
+            STATE_DIR.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "session_id": state.session_id,
+                "status": state.status,
+                "model": state.model,
+                "created_at": state.created_at.isoformat() if hasattr(state, "created_at") else "",
+                "messages": [],  # MVP: do not serialize full message history yet
+                "total_usage_input": state.total_usage_input,
+                "total_usage_output": state.total_usage_output,
+                "total_cost_usd": state.total_cost_usd,
+                "working_directory": state.working_directory,
+                "system_prompt_append": state.system_prompt_append,
+            }
+            with open(_path, "w", encoding="utf-8") as f:
+                json.dump(payload, f, indent=2, ensure_ascii=False)
+            logger.debug("Persisted session %s to disk at %s", state.session_id, _path)
+        except Exception as exc:
+            logger.exception("Failed to persist session %s: %s", state.session_id, exc)
 
 
 # Module-level instance

@@ -1,4 +1,16 @@
 """TenderClaw FastAPI application — entry point.
+"""Backend launcher and glue for Wave 1.
+
+This module is intentionally lightweight. It provides a minimal entry point
+that can be invoked to start simple components or to wire in more complex
+startup logic as Wave 1 matures.
+"""
+
+from __future__ import annotations
+
+def start():
+    # Placeholder for startup sequence; actual server startup is handled by the API layer
+    print("TenderClaw backend startup (Wave 1 placeholder)")
 
 Serves:
   - REST API at /api/*
