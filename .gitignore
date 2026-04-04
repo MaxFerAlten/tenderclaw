@@ -1,0 +1,87 @@
+# Repomix outputs
+my-output.md
+repomix-output.md
+repomix-output.pdf
+repomix-output.xml
+repomix-output.xml.md
+repomix-output.xml.pdf
+tenderwriter_app_summary.pdf
+tenderwriter_architettura_completa.drawio
+tenderwriter_presentazione_manageriale_tecnica.pptx
+my-output.md
+my-output-fix.md
+backend/app/ingestion/__pycache__/
+
+# --- Virtual environments ---
+.claude/
+.codex/
+venv/
+.venv/
+env/
+.conda/
+__pypackages__/
+
+# --- Python bytecode / caches ---
+**/__pycache__/
+*.pyc
+*.py[cod]
+*$py.class
+
+# --- Specific tracked pycache artifacts to ignore ---
+backend/app/api/__pycache__/
+backend/app/ingestion/__pycache__/__init__.cpython-311.pyc
+backend/app/ingestion/__pycache__/pipeline.cpython-311.pyc
+
+# --- Build / packaging ---
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# --- Test / tooling caches ---
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+
+# --- Logs ---
+*.log
+
+# --- Local config / secrets ---
+.env
+.env.*
+*.local
+secrets.* 
+*.key
+*.pem
+
+# --- IDE/editor ---
+.vscode/
+.idea/
+*.swp
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Jupyter ---
+.ipynb_checkpoints/
+
+# --- Node (se presente) ---
+node_modules/
+
+# --- Output generati (se ne hai) ---
+out/
+output/
+tmp/
+temp/
+
+# --- Models ---
+*.gguf
+kpi-reason-engine/data/

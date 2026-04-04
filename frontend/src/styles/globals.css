@@ -1,0 +1,42 @@
+@import "tailwindcss";
+
+/* TenderClaw custom design tokens */
+:root {
+  --tc-primary: #6d28d9;
+  --tc-primary-light: #8b5cf6;
+  --tc-accent: #f59e0b;
+  --tc-bg: #09090b;
+  --tc-surface: #18181b;
+  --tc-surface-hover: #27272a;
+  --tc-border: #3f3f46;
+  --tc-text: #fafafa;
+  --tc-text-muted: #a1a1aa;
+  --tc-success: #22c55e;
+  --tc-error: #ef4444;
+  --tc-warning: #f59e0b;
+}
+
+body {
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: var(--tc-bg);
+  color: var(--tc-text);
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--tc-border);
+  border-radius: 3px;
+}
+
+/* Code block styling */
+pre code {
+  font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", monospace;
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
