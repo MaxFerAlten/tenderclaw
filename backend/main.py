@@ -55,6 +55,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         logger.info("Persisted sessions loaded at startup (Wave 2 readiness)")
     except Exception as _exc:
         logger.warning("Failed to load persisted sessions at startup: %s", _exc)
+    # Bootstrap Wave 2 MVP hooks (non-blocking in startup sequence)
+    _init_hooks()
     register_builtin_tools(tool_registry)
     
     # Initialize plugins
@@ -99,6 +101,16 @@ def _init_channels() -> None:
     if settings.discord_token:
         channels.discord_manager.start()
         logger.info("Discord channel initialized")
+
+
+def _init_hooks() -> None:
+    """Bootstrap Wave 2 MVP hooks."""
+    try:
+        from backend.hooks.initializer import bootstrap_hooks
+        bootstrap_hooks()
+        logger.info("Wave 2 MVP hooks bootstrap complete")
+    except Exception as exc:
+        logger.warning("Wave 2 MVP hooks bootstrap failed: %s", exc)
 
 
 async def _shutdown_channels() -> None:
