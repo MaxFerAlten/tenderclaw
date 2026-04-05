@@ -2,9 +2,9 @@
 
 ## Executive Summary
 
-**Stato**: Wave 1 completato e verificato. Wave 2 MVP in larga parte implementato e testato. Hook engine completo (14 punti di lifecycle). Skill loader con parsing avanzato di SKILL.md (trigger, agents, flow, rules). Pipeline di orchestrazione Oracle → Metis → Sisyphus operativa con API REST. CI end-to-end attiva.
+**Stato**: Wave 1 completato e verificato. Wave 2 MVP completato — hook engine integrato nel runtime (15 punti di lifecycle), persistenza history completa, skill loader integrato nel system prompt. Pipeline di orchestrazione Oracle → Metis → Sisyphus operativa con API REST. CI end-to-end attiva.
 
-**Test status**: ✅ 3/3 test passano (wave1 resume minimal + wave2 mvp pipeline direct + wave2 mvp api)
+**Test status**: ✅ 4/4 test passano (wave1 resume minimal + wave1 message persistence + wave2 mvp pipeline + wave2 mvp api)
 
 ---
 
@@ -24,7 +24,7 @@
 | Restart simulation | `tools/wave1_restart_simulation.py` | ✅ |
 | Resume API endpoint | `backend/api/sessions.py` | ✅ |
 
-### Wave 2 — Hook Engine Completo (14 punti di lifecycle)
+### Wave 2 — Hook Engine Completo (15 punti di lifecycle, integrati nel runtime)
 
 | Hook Point | Handler | Stato |
 |---|---|---|
@@ -55,6 +55,7 @@ File: `backend/hooks/initializer.py` + `backend/hooks/dispatcher.py`
 | Descrizioni ricche nei prompt (vs placeholder "Specialized workflow skill") | ✅ |
 | Trigger patterns visibili nei prompt generati | ✅ |
 | Supporto multi-path (skills + superpowers/skills) | ✅ |
+| **Integrato nel system prompt builder** (`system_prompt.py:48`) | ✅ |
 
 File: `backend/core/skills.py`
 
@@ -111,11 +112,11 @@ Skills visible in prompt: autopilot, tdd, plan, review, security, team, etc.
 
 ### Alta priorità
 
-| Gap | Azione | File target |
-|---|---|---|
-| Persistenza history completa | Serializzare messaggi nel snapshot; testare restore completo | `backend/services/session_store.py` |
-| Hook: integrazione reale nel runtime | Collegare i 14 hook ai punti nel conversation loop | `backend/core/conversation.py`, `backend/core/tool_runner.py` |
-| Skill loader: integrazione con system_prompt | Chiamare `build_skills_instruction()` nella generazione del prompt | `backend/core/system_prompt.py` |
+| Gap | Azione | File target | Stato |
+|---|---|---|---|
+| Persistenza history completa | Serializzare messaggi nel snapshot; testare restore completo | `backend/services/session_store.py` | ✅ |
+| Hook: integrazione reale nel runtime | Collegare i 15 hook ai punti nel conversation loop | `backend/core/conversation.py`, `backend/core/tool_runner.py` | ✅ |
+| Skill loader: integrazione con system_prompt | Chiamare `build_skills_instruction()` nella generazione del prompt | `backend/core/system_prompt.py` | ✅ (già integrato)
 
 ### Media priorità
 
@@ -139,9 +140,9 @@ Skills visible in prompt: autopilot, tdd, plan, review, security, team, etc.
 ## Piano di avanzamento (Milestones)
 
 ### Milestone 1 — Chiusura Wave 2 MVP (0-2 settimane)
-- [ ] Hook integrati nel conversation loop (tool:before/after, turn:start/end)
-- [ ] Skill loader integrato in system prompt builder
-- [ ] Persistenza history completa (serializzazione messaggi)
+- [x] Hook integrati nel conversation loop (tool:before/after/error, turn:start/end, session:start/end, message:user:before, message:assistant:after, agent:delegate:before/after)
+- [x] Skill loader integrato in system prompt builder
+- [x] Persistenza history completa (serializzazione messaggi con Message.model_dump() e from_dict ricostruzione)
 - [ ] PlanStore minimal con save/load
 - [ ] MVP MCP lifecycle
 - [ ] Test end-to-end per sessione completa (create → turn → persist → restart → restore)
@@ -191,6 +192,7 @@ pytest backend/tests/test_wave2_mvp_api.py -q
 
 # Tutti i test
 pytest backend/tests/test_wave1_resume_minimal.py backend/tests/test_wave2_mvp_api.py -q
+# → 4/4 passano
 ```
 
 ---
@@ -204,7 +206,9 @@ pytest backend/tests/test_wave1_resume_minimal.py backend/tests/test_wave2_mvp_a
 - `ac7ffbc` — Wave2 MVP: bootstrap hook initializer on startup
 - `785eff0` — Wave2 MVP: add MVP runner API endpoint (/api/mvp/run)
 - `9b1a1a6` — docs: add reporto-gpt5-nano.md
-- `422fd1c` — Wave2: comprehensive hooks (14 lifecycle points), enhanced skill loader with trigger/agent/flow parsing, full MVP pipeline+runner+API, CI with restart simulation step
+- `422fd1c` — Wave2: comprehensive hooks (15 lifecycle points), enhanced skill loader with trigger/agent/flow parsing, full MVP pipeline+runner+API, CI with restart simulation step
+- `b7ab509` — persist: serialize full message history in session snapshots
+- `2105cef` — hooks: integrate 15 lifecycle hooks into conversation and tool runners
 
 ---
 
