@@ -14,7 +14,7 @@ from backend.core.streaming import StreamCollector
 from backend.core.system_prompt import build_system_prompt
 from backend.schemas.messages import Message, Role, ToolResultBlock
 from backend.schemas.sessions import SessionStatus
-from backend.services.session_store import SessionData
+from backend.services.session_store import SessionData, session_store
 from backend.schemas.ws import (
     WSCostUpdate,
     WSError,
@@ -62,6 +62,7 @@ async def run_conversation_turn(
 
     await _agentic_loop(session, send)
     session.status = SessionStatus.IDLE
+    session_store.persist(session)
 
 
 async def _agentic_loop(session: SessionData, send: SendFn) -> None:
@@ -165,6 +166,7 @@ async def _run_team_pipeline(session: SessionData, task: str, send: SendFn) -> N
 
     _record_wisdom(task, "pipeline")
     session.status = SessionStatus.IDLE
+    session_store.persist(session)
 
 
 async def _validate_api_key(session: SessionData, send: SendFn) -> bool:

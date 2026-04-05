@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from backend.schemas.sessions import SessionCreate, SessionStatus
+from backend.schemas.messages import Message
 from backend.config import settings
 from backend.utils.errors import SessionNotFoundError
 
@@ -68,6 +69,16 @@ class SessionData:
         else:
             created_at = datetime.utcnow()
         messages = data.get("messages", []) if isinstance(data.get("messages"), list) else []
+        reconstructed = []
+        for m in messages:
+            if isinstance(m, dict):
+                try:
+                    reconstructed.append(Message.model_validate(m))
+                except Exception:
+                    reconstructed.append(m)
+            else:
+                reconstructed.append(m)
+        messages = reconstructed
         return cls(
             session_id=data.get("session_id", ""),
             status=SessionStatus(data.get("status", SessionStatus.IDLE.value)),
@@ -165,28 +176,43 @@ class SessionStore:
         self._sessions.clear()
         logger.info("Closed %d sessions", count)
 
-    def _persist_session(self, state: SessionData) -> None:
-        """Persist a minimal snapshot of session state to disk (Wave 1).
-        This is intentionally lightweight to avoid coupling with full in-memory history.
+    def persist(self, state: SessionData) -> None:
+        """Persist full session state including message history to disk.
+        Called externally after conversation turns.
         """
+        self._persist_session(state)
+
+    def _persist_session(self, state: SessionData) -> None:
+        """Persist full session snapshot including message history to disk."""
         try:
             _path = STATE_DIR / f"{state.session_id}.json"
             STATE_DIR.mkdir(parents=True, exist_ok=True)
+            serialized_messages = []
+            for msg in state.messages:
+                if hasattr(msg, "model_dump"):
+                    serialized_messages.append(msg.model_dump())
+                elif isinstance(msg, dict):
+                    serialized_messages.append(msg)
+                else:
+                    serialized_messages.append({"role": str(msg.role), "content": str(msg.content), "message_id": getattr(msg, "message_id", "")})
             payload = {
                 "session_id": state.session_id,
-                "status": state.status,
+                "status": state.status.value if hasattr(state.status, "value") else str(state.status),
                 "model": state.model,
                 "created_at": state.created_at.isoformat() if hasattr(state, "created_at") else "",
-                "messages": [],  # MVP: do not serialize full message history yet
+                "messages": serialized_messages,
                 "total_usage_input": state.total_usage_input,
                 "total_usage_output": state.total_usage_output,
                 "total_cost_usd": state.total_cost_usd,
                 "working_directory": state.working_directory,
                 "system_prompt_append": state.system_prompt_append,
+                "should_abort": state.should_abort,
+                "model_config": state.model_config,
+                "api_keys": state.api_keys,
             }
             with open(_path, "w", encoding="utf-8") as f:
                 json.dump(payload, f, indent=2, ensure_ascii=False)
-            logger.debug("Persisted session %s to disk at %s", state.session_id, _path)
+            logger.debug("Persisted session %s (%d messages) to disk at %s", state.session_id, len(state.messages), _path)
         except Exception as exc:
             logger.exception("Failed to persist session %s: %s", state.session_id, exc)
 
