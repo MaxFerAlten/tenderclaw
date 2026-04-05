@@ -15,6 +15,8 @@ from backend.core.system_prompt import build_system_prompt
 from backend.schemas.messages import Message, Role, ToolResultBlock
 from backend.schemas.sessions import SessionStatus
 from backend.services.session_store import SessionData, session_store
+from backend.hooks.dispatcher import hook_dispatcher
+from backend.schemas.hooks import HookPoint
 from backend.schemas.ws import (
     WSCostUpdate,
     WSError,
@@ -38,6 +40,11 @@ async def run_conversation_turn(
     send: SendFn,
 ) -> None:
     """Run a full conversation turn (may span multiple API calls for tool use)."""
+    await hook_dispatcher.dispatch(
+        HookPoint.SESSION_START,
+        data={"user_content": user_content},
+        session_id=session.session_id,
+    )
     if user_content.startswith("/team"):
         await _run_team_pipeline(session, user_content.replace("/team", "").strip(), send)
         return
@@ -54,6 +61,11 @@ async def run_conversation_turn(
         content=user_content,
         message_id=f"msg_{uuid.uuid4().hex[:8]}",
     ))
+    await hook_dispatcher.dispatch(
+        HookPoint.MESSAGE_USER_BEFORE,
+        data={"content": user_content},
+        session_id=session.session_id,
+    )
 
     intent = await _classify(user_content, session.model)
     if intent == "implement" and len(user_content) > 100:
@@ -63,6 +75,11 @@ async def run_conversation_turn(
     await _agentic_loop(session, send)
     session.status = SessionStatus.IDLE
     session_store.persist(session)
+    await hook_dispatcher.dispatch(
+        HookPoint.SESSION_END,
+        data={},
+        session_id=session.session_id,
+    )
 
 
 async def _agentic_loop(session: SessionData, send: SendFn) -> None:
@@ -77,10 +94,20 @@ async def _agentic_loop(session: SessionData, send: SendFn) -> None:
     for turn_number in range(1, MAX_TURNS + 1):
         if session.should_abort:
             session.should_abort = False
+            await hook_dispatcher.dispatch(
+                HookPoint.TURN_END,
+                data={"turn_number": turn_number, "agent": "sisyphus", "stop_reason": "aborted"},
+                session_id=session.session_id,
+            )
             await send(WSError(error="Operation cancelled by user", code="aborted").model_dump())
             return
 
         message_id = f"msg_{uuid.uuid4().hex[:8]}"
+        await hook_dispatcher.dispatch(
+            HookPoint.TURN_START,
+            data={"turn_number": turn_number, "agent": "sisyphus"},
+            session_id=session.session_id,
+        )
         await send(WSTurnStart(turn_number=turn_number, agent_name="sisyphus").model_dump())
         await send(WSMessageStart(message_id=message_id).model_dump())
 
@@ -97,21 +124,37 @@ async def _agentic_loop(session: SessionData, send: SendFn) -> None:
             ):
                 if session.should_abort:
                     session.should_abort = False
+                    await hook_dispatcher.dispatch(
+                        HookPoint.TURN_END,
+                        data={"turn_number": turn_number, "agent": "sisyphus", "stop_reason": "aborted"},
+                        session_id=session.session_id,
+                    )
                     await send(WSError(error="Operation cancelled by user", code="aborted").model_dump())
                     return
                 await collector.process(event)
         except Exception as exc:
             logger.error("API error on turn %d: %s", turn_number, exc)
+            await hook_dispatcher.dispatch(
+                HookPoint.TURN_END,
+                data={"turn_number": turn_number, "agent": "sisyphus", "stop_reason": "error"},
+                session_id=session.session_id,
+            )
             await send(WSError(error=str(exc)).model_dump())
             return
 
         # Persist assistant message
         blocks = collector.content_blocks()
-        session.messages.append(Message(
+        assistant_msg = Message(
             role=Role.ASSISTANT,
             content=blocks if blocks else "".join(collector.text_parts),
             message_id=message_id,
-        ))
+        )
+        session.messages.append(assistant_msg)
+        await hook_dispatcher.dispatch(
+            HookPoint.MESSAGE_ASSISTANT_AFTER,
+            data={"message_id": message_id, "content": assistant_msg.content, "stop_reason": collector.stop_reason},
+            session_id=session.session_id,
+        )
         session.total_usage_input += collector.usage.input_tokens
         session.total_usage_output += collector.usage.output_tokens
 
@@ -120,6 +163,12 @@ async def _agentic_loop(session: SessionData, send: SendFn) -> None:
             input_tokens=session.total_usage_input,
             output_tokens=session.total_usage_output,
         ).model_dump())
+
+        await hook_dispatcher.dispatch(
+            HookPoint.TURN_END,
+            data={"turn_number": turn_number, "agent": "sisyphus", "stop_reason": collector.stop_reason},
+            session_id=session.session_id,
+        )
 
         if collector.tool_uses and collector.stop_reason == "tool_use":
             result_blocks = await run_tool_uses(
@@ -152,10 +201,22 @@ async def _run_team_pipeline(session: SessionData, task: str, send: SendFn) -> N
     history = _to_api_messages(session.messages[:-1])
     text_parts: list[str] = []
 
+    await hook_dispatcher.dispatch(
+        HookPoint.AGENT_DELEGATE_BEFORE,
+        data={"task": task, "agent": "team"},
+        session_id=session.session_id,
+    )
+
     async for part in team_pipeline.run_implement_pipeline(task, history, send, session=session):
         if part.get("type") == "assistant_text":
             text_parts.append(part.get("delta", ""))
         await send(part)
+
+    await hook_dispatcher.dispatch(
+        HookPoint.AGENT_DELEGATE_AFTER,
+        data={"task": task, "agent": "team"},
+        session_id=session.session_id,
+    )
 
     if text_parts:
         session.messages.append(Message(
@@ -167,6 +228,11 @@ async def _run_team_pipeline(session: SessionData, task: str, send: SendFn) -> N
     _record_wisdom(task, "pipeline")
     session.status = SessionStatus.IDLE
     session_store.persist(session)
+    await hook_dispatcher.dispatch(
+        HookPoint.SESSION_END,
+        data={},
+        session_id=session.session_id,
+    )
 
 
 async def _validate_api_key(session: SessionData, send: SendFn) -> bool:

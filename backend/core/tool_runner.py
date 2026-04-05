@@ -10,7 +10,9 @@ import asyncio
 import logging
 from typing import Any, Callable, Awaitable
 
+from backend.hooks.dispatcher import hook_dispatcher
 from backend.hooks.permissions import check_permission
+from backend.schemas.hooks import HookPoint
 from backend.schemas.messages import ToolResultBlock, ToolUseBlock
 from backend.schemas.permissions import PermissionDecision, PermissionMode
 from backend.schemas.tools import ToolInput, ToolResult
@@ -92,7 +94,27 @@ async def _run_single(
         tool_use_id=tu.id,
         send=send,
     )
-    return await execute_tool(tool, ToolInput(tool_use_id=tu.id, name=tu.name, input=tu.input), ctx)
+
+    await hook_dispatcher.dispatch(
+        HookPoint.TOOL_BEFORE,
+        data={"tool_name": tu.name, "tool_input": tu.input, "tool_use_id": tu.id},
+        session_id=session.session_id,
+    )
+    try:
+        result = await execute_tool(tool, ToolInput(tool_use_id=tu.id, name=tu.name, input=tu.input), ctx)
+    except Exception as exc:
+        await hook_dispatcher.dispatch(
+            HookPoint.TOOL_ERROR,
+            data={"tool_name": tu.name, "tool_input": tu.input, "error": str(exc)},
+            session_id=session.session_id,
+        )
+        raise
+    await hook_dispatcher.dispatch(
+        HookPoint.TOOL_AFTER,
+        data={"tool_name": tu.name, "tool_use_id": tu.id, "result": result.content, "is_error": result.is_error},
+        session_id=session.session_id,
+    )
+    return result
 
 
 async def _ask_user(tu: ToolUseBlock, session: SessionData, send: SendFn) -> bool:
