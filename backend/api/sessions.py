@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException, Response
 from backend.schemas.sessions import SessionCreate, SessionInfo
 from backend.services.session_store import session_store
 from backend.utils.errors import SessionNotFoundError
+from fastapi import HTTPException
 
 logger = logging.getLogger("tenderclaw.api.sessions")
 router = APIRouter()
@@ -32,6 +33,16 @@ async def list_sessions() -> list[SessionInfo]:
 @router.get("/{session_id}", response_model=SessionInfo)
 async def get_session(session_id: str) -> SessionInfo:
     """Get metadata for a single session."""
+    try:
+        state = session_store.get(session_id)
+    except SessionNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
+    return state.to_info()
+
+
+@router.get("/{session_id}/resume", response_model=SessionInfo)
+async def resume_session(session_id: str) -> SessionInfo:
+    """Resume a session by ensuring its state is loaded (Wave 2 readiness)."""
     try:
         state = session_store.get(session_id)
     except SessionNotFoundError:
