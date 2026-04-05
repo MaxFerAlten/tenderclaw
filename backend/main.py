@@ -1,24 +1,7 @@
 """TenderClaw FastAPI application — entry point.
-"""Backend launcher and glue for Wave 1.
 
-This module is intentionally lightweight. It provides a minimal entry point
-that can be invoked to start simple components or to wire in more complex
-startup logic as Wave 1 matures.
+Wave 2 MVP bootstrap with startup hooks and persistence load.
 """
-
-from __future__ import annotations
-
-def start():
-    # Placeholder for startup sequence; actual server startup is handled by the API layer
-    print("TenderClaw backend startup (Wave 1 placeholder)")
-
-Serves:
-  - REST API at /api/*
-  - WebSocket at /api/ws/{session_id}
-  - React frontend at /tenderclaw
-  - Runs on port 6669
-"""
-
 from __future__ import annotations
 
 import logging
@@ -81,7 +64,6 @@ def _init_plugins() -> None:
     from backend.agents.registry import agent_registry
     from backend.plugins.superpowers import SuperpowersPlugin
     
-    # Load built-in plugins
     try:
         plugin_loader.load_plugin(SuperpowersPlugin())
         plugin_loader.register_all(tool_registry, agent_registry)
@@ -130,7 +112,6 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    # CORS for dev mode (Vite dev server on :5173)
     if settings.dev:
         app.add_middleware(
             CORSMiddleware,
@@ -139,10 +120,8 @@ def create_app() -> FastAPI:
             allow_headers=["*"],
         )
 
-    # Mount API routes
     app.include_router(api_router, prefix="/api")
 
-    # Serve React frontend build at /tenderclaw
     if FRONTEND_DIST.exists():
         app.mount(
             "/tenderclaw/assets",
@@ -153,7 +132,6 @@ def create_app() -> FastAPI:
         @app.get("/tenderclaw")
         @app.get("/tenderclaw/{path:path}")
         async def serve_frontend(path: str = "") -> FileResponse:
-            """Serve the React SPA — all routes go to index.html."""
             return FileResponse(FRONTEND_DIST / "index.html")
 
     return app
