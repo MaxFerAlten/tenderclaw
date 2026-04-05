@@ -11,6 +11,7 @@ from backend.api.ws import router as ws_router
 from backend.api.gateway import router as gateway_router
 from backend.api.channels import router as channels_router
 from backend.api.diagnostics import router as diagnostics_router
+from backend.api.mvp import router as mvp_router
 from backend.api.config import router as config_router
 
 api_router = APIRouter()
@@ -23,3 +24,4 @@ api_router.include_router(gateway_router, prefix="/v1", tags=["openai-compat"])
 api_router.include_router(channels_router, tags=["channels"])
 api_router.include_router(diagnostics_router, prefix="/diagnostics", tags=["diagnostics"])
 api_router.include_router(config_router, tags=["config"])
+api_router.include_router(mvp_router, prefix="/mvp", tags=["mvp"])
