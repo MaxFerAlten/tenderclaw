@@ -137,7 +137,7 @@ class TelegramManager(ChannelManager):
                         self._offset = update["update_id"] + 1
                         await self._process_update(update)
             except httpx.TimeoutException:
-                pass
+                logger.debug("Telegram long-poll timeout (normal, retrying)")
     
     async def _process_update(self, update: dict[str, Any]) -> None:
         """Process a single Telegram update."""

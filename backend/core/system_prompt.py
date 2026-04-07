@@ -5,7 +5,7 @@ Mirrors Claude Code's modular prompt architecture with cacheable + dynamic secti
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 
 BASE_SYSTEM_PROMPT = """\
@@ -80,7 +80,7 @@ def build_system_prompt(
         parts.append(f"\n{memory_context}")
 
     # Dynamic section — not cacheable
-    parts.append(f"\n## Context\n- Current date: {datetime.utcnow().strftime('%Y-%m-%d')}")
+    parts.append(f"\n## Context\n- Current date: {datetime.now(UTC).strftime('%Y-%m-%d')}")
     parts.append(f"- Working directory: {working_directory}")
 
     if append:

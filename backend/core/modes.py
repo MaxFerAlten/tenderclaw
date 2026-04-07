@@ -1,7 +1,7 @@
 """Mode state management for active workflows."""
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Literal
 
 @dataclass
@@ -24,7 +24,7 @@ class ModeManager:
         cls._current_mode = ModeState(
             mode=mode,
             active=True,
-            started_at=datetime.utcnow().isoformat(),
+            started_at=datetime.now(UTC).isoformat(),
             metadata=metadata or {}
         )
     

@@ -6,7 +6,7 @@ import asyncio
 import json
 import logging
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -26,7 +26,7 @@ class SessionData:
     session_id: str
     status: SessionStatus = SessionStatus.IDLE
     model: str = ""
-    created_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     messages: list = field(default_factory=list)
     total_usage_input: int = 0
     total_usage_output: int = 0
@@ -65,9 +65,9 @@ class SessionData:
             try:
                 created_at = datetime.fromisoformat(created_at)
             except Exception:
-                created_at = datetime.utcnow()
+                created_at = datetime.now(UTC)
         else:
-            created_at = datetime.utcnow()
+            created_at = datetime.now(UTC)
         messages = data.get("messages", []) if isinstance(data.get("messages"), list) else []
         reconstructed = []
         for m in messages:
@@ -133,7 +133,7 @@ class SessionStore:
             session_id=session_id,
             status=SessionStatus.IDLE,
             model=params.model or settings.default_model,
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(UTC),
             working_directory=params.working_directory or ".",
             system_prompt_append=params.system_prompt_append or "",
         )

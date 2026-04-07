@@ -1,7 +1,7 @@
 """First-party event logger for TenderClaw."""
 
 from dataclasses import dataclass, asdict
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 from pathlib import Path
 import json
@@ -46,7 +46,7 @@ class FirstPartyEventLogger:
         event = Event(
             id=str(uuid.uuid4()),
             name=event_name,
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             properties=properties or {},
             user_id=user_id,
             session_id=session_id,

@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 import uuid
 import jwt
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 
 class BridgeState(str, Enum):
@@ -20,8 +20,8 @@ class RemoteSession:
     bridge_id: str
     client_id: str
     state: BridgeState = BridgeState.DISCONNECTED
-    created_at: datetime = field(default_factory=datetime.utcnow)
-    last_activity: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    last_activity: datetime = field(default_factory=lambda: datetime.now(UTC))
     metadata: dict = field(default_factory=dict)
 
 
@@ -48,8 +48,8 @@ class RemoteBridge:
         payload = {
             "session_id": session_id,
             "client_id": client_id,
-            "exp": datetime.utcnow() + timedelta(hours=self.config.jwt_expiry_hours),
-            "iat": datetime.utcnow(),
+            "exp": datetime.now(UTC) + timedelta(hours=self.config.jwt_expiry_hours),
+            "iat": datetime.now(UTC),
         }
         return jwt.encode(payload, self.config.jwt_secret, algorithm="HS256")
 
@@ -93,7 +93,7 @@ class RemoteBridge:
 
         session = self.sessions[session_id]
         session.state = BridgeState.AUTHENTICATED
-        session.last_activity = datetime.utcnow()
+        session.last_activity = datetime.now(UTC)
         return True
 
     def disconnect(self, session_id: str) -> bool:
@@ -113,7 +113,7 @@ class RemoteBridge:
 
     def cleanup_stale_sessions(self, timeout_seconds: int = 300):
         """Remove sessions with no activity."""
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
         stale = [
             sid for sid, s in self.sessions.items()
             if (now - s.last_activity).total_seconds() > timeout_seconds

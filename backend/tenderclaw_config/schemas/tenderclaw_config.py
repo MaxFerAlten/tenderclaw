@@ -102,7 +102,7 @@ class TenderClawConfig(BaseModel):
 
     model_config = ConfigDict(extra="allow", populate_by_name=True)
 
-    schema: Optional[str] = Field(default=None, alias="$schema")
+    config_schema: Optional[str] = Field(default=None, alias="$schema")
 
     new_task_system_enabled: bool = False
     default_run_agent: Optional[str] = None

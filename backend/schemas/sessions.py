@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 
 from pydantic import BaseModel, Field
@@ -33,7 +33,7 @@ class SessionInfo(BaseModel):
     session_id: str
     status: SessionStatus = SessionStatus.IDLE
     model: str = ""
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     message_count: int = 0
     total_usage: TokenUsage = Field(default_factory=TokenUsage)
     total_cost_usd: float = 0.0
@@ -45,7 +45,7 @@ class SessionState(BaseModel):
     session_id: str
     status: SessionStatus = SessionStatus.IDLE
     model: str = ""
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     messages: list[Message] = Field(default_factory=list)
     total_usage: TokenUsage = Field(default_factory=TokenUsage)
     total_cost_usd: float = 0.0

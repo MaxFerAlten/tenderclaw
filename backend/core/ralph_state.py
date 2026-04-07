@@ -1,7 +1,7 @@
 """Ralph autonomous execution state management."""
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 import json
 from typing import Literal
@@ -50,7 +50,7 @@ class RalphStateManager:
         state = RalphState(
             active=True,
             iteration=1,
-            started_at=datetime.utcnow().isoformat(),
+            started_at=datetime.now(UTC).isoformat(),
             task_slug=task_slug,
             context_snapshot_path=context_path,
         )

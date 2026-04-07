@@ -83,8 +83,7 @@ class AdvancedFallbackConfig(BaseModel):
     max_retries_per_model: Annotated[int, Field(ge=1, le=10)] = 2
     max_total_attempts: Annotated[int, Field(ge=1, le=50)] = 10
 
-    class Config:
-        extra = "allow"
+    model_config = ConfigDict(extra="allow")
 
 
 class ExperimentalConfig(BaseModel):

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TypedDict
 
@@ -284,7 +284,7 @@ class SessionHistoryService:
         if not detail:
             return None
         return {
-            "exported_at": datetime.utcnow().isoformat(),
+            "exported_at": datetime.now(UTC).isoformat(),
             "version": "1.0",
             "session": detail,
         }
@@ -298,7 +298,7 @@ class SessionHistoryService:
             if detail:
                 exported_sessions.append(detail)
         return {
-            "exported_at": datetime.utcnow().isoformat(),
+            "exported_at": datetime.now(UTC).isoformat(),
             "version": "1.0",
             "total_sessions": len(exported_sessions),
             "sessions": exported_sessions,

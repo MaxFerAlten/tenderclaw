@@ -12,7 +12,7 @@ import os
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -56,9 +56,9 @@ class SessionState:
     session_id: str
     status: SessionStatus = SessionStatus.IDLE
     model: str = ""
-    created_at: datetime = field(default_factory=datetime.utcnow)
-    updated_at: datetime = field(default_factory=datetime.utcnow)
-    last_activity: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    last_activity: datetime = field(default_factory=lambda: datetime.now(UTC))
     working_directory: str = "."
     messages: List[Dict[str, Any]] = field(default_factory=list)
     usage: UsageMetrics = field(default_factory=UsageMetrics)
@@ -71,8 +71,8 @@ class SessionState:
 
     def touch(self) -> None:
         """Update last activity timestamp."""
-        self.last_activity = datetime.utcnow()
-        self.updated_at = datetime.utcnow()
+        self.last_activity = datetime.now(UTC)
+        self.updated_at = datetime.now(UTC)
 
     def is_expired_session(self) -> bool:
         """Check if session has expired based on timeout."""
@@ -80,7 +80,7 @@ class SessionState:
             return True
         
         expiry_time = self.last_activity + timedelta(hours=SESSION_TIMEOUT_HOURS)
-        return datetime.utcnow() > expiry_time
+        return datetime.now(UTC) > expiry_time
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for serialization."""

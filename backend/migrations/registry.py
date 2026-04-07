@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass, field
 from typing import Callable, Any
-from datetime import datetime
+from datetime import UTC, datetime
 
 
 @dataclass
@@ -50,7 +50,7 @@ class MigrationRegistry:
     @classmethod
     def mark_applied(cls, migration_id: str):
         """Mark migration as applied."""
-        cls._applied[migration_id] = datetime.utcnow()
+        cls._applied[migration_id] = datetime.now(UTC)
     
     @classmethod
     def get_applied_ids(cls) -> set[str]:
@@ -61,7 +61,7 @@ class MigrationRegistry:
     def set_applied_ids(cls, applied_ids: dict[str, str]):
         """Set applied migration IDs from external state."""
         cls._applied = {
-            k: datetime.fromisoformat(v) if v else datetime.utcnow()
+            k: datetime.fromisoformat(v) if v else datetime.now(UTC)
             for k, v in applied_ids.items()
         }
     
