@@ -6,6 +6,8 @@ import { useState, useRef, useCallback } from "react";
 import { Square } from "lucide-react";
 import { useSessionStore } from "../../stores/sessionStore";
 import { ws } from "../../api/ws";
+import { VoiceButton } from "../voice/VoiceButton";
+import { useVoiceMode } from "../voice/useVoiceMode";
 
 interface Props {
   onSend: (content: string) => void;
@@ -16,6 +18,14 @@ export function PromptInput({ onSend }: Props) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const status = useSessionStore((s) => s.status);
   const isBusy = status === "busy";
+
+  const { isListening, isSupported, toggleListening } = useVoiceMode({
+    onTranscript: (t) => {
+      if (t.final) {
+        setValue((prev) => prev + " " + t.final);
+      }
+    },
+  });
 
   const handleSubmit = useCallback(() => {
     const trimmed = value.trim();
@@ -52,6 +62,12 @@ export function PromptInput({ onSend }: Props) {
           rows={1}
           className="flex-1 resize-none rounded-xl bg-zinc-900 border border-zinc-700 px-4 py-3 text-sm text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 disabled:opacity-50"
           style={{ minHeight: "44px", maxHeight: "200px" }}
+        />
+        <VoiceButton
+          isListening={isListening}
+          isSupported={isSupported}
+          onClick={toggleListening}
+          size="md"
         />
         {isBusy ? (
           <button

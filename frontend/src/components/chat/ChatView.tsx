@@ -6,9 +6,12 @@
 import { useEffect, useCallback, useRef } from "react";
 import { MessageList } from "./MessageList";
 import { PromptInput } from "./PromptInput";
+import { KeywordBadge } from "./KeywordBadge";
 import { useSessionStore } from "../../stores/sessionStore";
+import { useKeybindingContext } from "../../keybindings";
 import { ws } from "../../api/ws";
 import { api } from "../../api/client";
+import { keywordsApi } from "../../api/keywordsApi";
 
 export function ChatView() {
   const sessionId = useSessionStore((s) => s.sessionId);
@@ -16,6 +19,9 @@ export function ChatView() {
   const addUserMessage = useSessionStore((s) => s.addUserMessage);
   const handleServerEvent = useSessionStore((s) => s.handleServerEvent);
   const setWsStatus = useSessionStore((s) => s.setWsStatus);
+  const detectedKeyword = useSessionStore((s) => s.detectedKeyword);
+  const setDetectedKeyword = useSessionStore((s) => s.setDetectedKeyword);
+  const { setContext } = useKeybindingContext();
 
   // Stable refs so the effect never re-runs due to store function identity changes
   const handleServerEventRef = useRef(handleServerEvent);
@@ -31,6 +37,10 @@ export function ChatView() {
       mountedRef.current = false;
     };
   }, []);
+
+  useEffect(() => {
+    setContext("Chat");
+  }, [setContext]);
 
   useEffect(() => {
     if (sessionId) {
@@ -66,15 +76,30 @@ export function ChatView() {
   }, [sessionId]);
 
   const handleSend = useCallback(
-    (content: string) => {
+    async (content: string) => {
+      try {
+        const result = await keywordsApi.detect(content);
+        if (result.primary_action && result.matches.length > 0) {
+          setDetectedKeyword(result.matches[0]);
+        } else {
+          setDetectedKeyword(null);
+        }
+      } catch {
+        setDetectedKeyword(null);
+      }
       addUserMessage(content);
       ws.sendUserMessage(content);
     },
-    [addUserMessage],
+    [addUserMessage, setDetectedKeyword],
   );
 
   return (
     <div className="flex flex-col h-full">
+      {detectedKeyword && (
+        <div className="px-4 pt-3">
+          <KeywordBadge keyword={detectedKeyword} />
+        </div>
+      )}
       <MessageList />
       <PromptInput onSend={handleSend} />
     </div>

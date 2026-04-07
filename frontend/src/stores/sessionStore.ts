@@ -5,6 +5,7 @@
 
 import { create } from "zustand";
 import type { Message, ContentBlock, WSServerEvent } from "../api/types";
+import type { KeywordMapping } from "../api/keywordsApi";
 
 interface Artifact {
   artifact_id: string;
@@ -51,18 +52,24 @@ interface SessionStore {
   totalCostUsd: number;
   inputTokens: number;
   outputTokens: number;
+  perMessageCosts: Array<{ messageId: string; inputTokens: number; outputTokens: number; costUsd: number }>;
 
   // Artifacts (A2UI)
   artifacts: Map<string, Artifact>;
   activeArtifactId: string | null;
 
+  // Keyword detection
+  detectedKeyword: KeywordMapping | null;
+
   // Actions
+  getMessageCost: (messageId: string) => { inputTokens: number; outputTokens: number; costUsd: number } | null;
   setSession: (sessionId: string, model: string) => void;
   setModel: (model: string) => void;
   addUserMessage: (content: string) => void;
   handleServerEvent: (event: WSServerEvent) => void;
   setWsStatus: (status: "connecting" | "connected" | "disconnected") => void;
   removePermissionRequest: (toolUseId: string) => void;
+  setDetectedKeyword: (keyword: KeywordMapping | null) => void;
   reset: () => void;
 }
 
@@ -81,11 +88,18 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   totalCostUsd: 0,
   inputTokens: 0,
   outputTokens: 0,
+  perMessageCosts: [],
   artifacts: new Map(),
   activeArtifactId: null,
+  detectedKeyword: null,
+
+  getMessageCost: (messageId) => {
+    const found = get().perMessageCosts.find((p) => p.messageId === messageId);
+    return found ?? null;
+  },
 
   setSession: (sessionId, model) =>
-    set({ sessionId, model, messages: [], status: "idle" }),
+    set({ sessionId, model, messages: [], status: "idle", perMessageCosts: [] }),
 
   setModel: (model) => set({ model }),
 
@@ -105,6 +119,8 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
       permissionQueue: s.permissionQueue.filter((r) => r.tool_use_id !== toolUseId),
     })),
 
+  setDetectedKeyword: (keyword) => set({ detectedKeyword: keyword }),
+
   reset: () =>
     set({
       sessionId: null,
@@ -117,6 +133,8 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
       activeTools: new Map(),
       permissionQueue: [],
       totalCostUsd: 0,
+      perMessageCosts: [],
+      detectedKeyword: null,
     }),
 
   handleServerEvent: (event) => {
@@ -217,13 +235,24 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
         set({ activeAgent: event.agent_name });
         break;
 
-      case "cost_update":
-        set({
+      case "cost_update": {
+        const prevInput = state.inputTokens;
+        const prevOutput = state.outputTokens;
+        const deltaIn = event.input_tokens - prevInput;
+        const deltaOut = event.output_tokens - prevOutput;
+        const deltaCost = event.total_cost_usd - state.totalCostUsd;
+        const msgId = state.streamingMessageId || `cost_${Date.now()}`;
+        set((s) => ({
           totalCostUsd: event.total_cost_usd,
           inputTokens: event.input_tokens,
           outputTokens: event.output_tokens,
-        });
+          perMessageCosts: [
+            ...s.perMessageCosts,
+            { messageId: msgId, inputTokens: Math.max(0, deltaIn), outputTokens: Math.max(0, deltaOut), costUsd: Math.max(0, deltaCost) },
+          ],
+        }));
         break;
+      }
 
       case "ui_update": {
         const artifacts = new Map(state.artifacts);

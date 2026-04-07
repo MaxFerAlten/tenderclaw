@@ -11,12 +11,17 @@ import { Canvas } from "./Canvas";
 import { PermissionDialog } from "../tools/PermissionDialog";
 import { ws } from "../../api/ws";
 
-export function AppShell() {
+interface AppShellProps {
+  sidebarOpen?: boolean;
+  onToggleSidebar?: () => void;
+}
+
+export function AppShell({ sidebarOpen = true, onToggleSidebar }: AppShellProps) {
   return (
     <div className="flex h-screen bg-zinc-950 font-sans text-zinc-300 relative">
-      <Sidebar />
+      {sidebarOpen && <Sidebar onToggleSidebar={onToggleSidebar} />}
       <div className="flex flex-1 flex-col min-w-0">
-        <Header />
+        <Header onToggleSidebar={onToggleSidebar} />
         <main className="flex-1 overflow-hidden relative flex">
           <div className="flex-1 overflow-hidden relative flex flex-col">
             <Outlet />

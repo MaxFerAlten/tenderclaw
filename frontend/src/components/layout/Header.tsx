@@ -7,17 +7,22 @@ import { useState, useEffect } from "react";
 import { useSessionStore } from "../../stores/sessionStore";
 import { ws } from "../../api/ws";
 import { api } from "../../api/client";
+import { CostBadge } from "../shared/CostBadge";
+import { PanelLeft } from "lucide-react";
 
 interface ModelEntry {
   id: string;
   owned_by: string;
 }
 
-export function Header() {
+interface HeaderProps {
+  onToggleSidebar?: () => void;
+}
+
+export function Header({ onToggleSidebar }: HeaderProps) {
   const model = useSessionStore((s) => s.model);
   const status = useSessionStore((s) => s.status);
   const wsStatus = useSessionStore((s) => s.wsStatus);
-  const totalCost = useSessionStore((s) => s.totalCostUsd);
   const inputTokens = useSessionStore((s) => s.inputTokens);
   const outputTokens = useSessionStore((s) => s.outputTokens);
   const [models, setModels] = useState<ModelEntry[]>([]);
@@ -46,6 +51,7 @@ export function Header() {
     google: "text-blue-400",
     xai: "text-cyan-400",
     deepseek: "text-indigo-400",
+    openrouter: "text-indigo-400",
     ollama: "text-pink-400",
   };
 
@@ -53,8 +59,17 @@ export function Header() {
 
   return (
     <header className="h-12 border-b border-zinc-800 bg-zinc-950 flex items-center justify-between px-4 relative">
-      {/* Left: Status + Model selector */}
+      {/* Left: Sidebar toggle + Status + Model selector */}
       <div className="flex items-center gap-3">
+        {onToggleSidebar && (
+          <button
+            onClick={onToggleSidebar}
+            className="p-1.5 rounded hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300 transition-colors"
+            title="Toggle sidebar (Ctrl+B)"
+          >
+            <PanelLeft className="w-4 h-4" />
+          </button>
+        )}
         <span className={`w-2 h-2 rounded-full ${statusColor}`} />
         <button
           onClick={() => setShowSelector(!showSelector)}
@@ -106,9 +121,7 @@ export function Header() {
         <span>
           In: {inputTokens.toLocaleString()} / Out: {outputTokens.toLocaleString()}
         </span>
-        <span className="text-amber-400 font-mono">
-          ${totalCost.toFixed(4)}
-        </span>
+        <CostBadge compact />
       </div>
     </header>
   );
