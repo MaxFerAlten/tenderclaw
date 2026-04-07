@@ -13,6 +13,7 @@ from typing import Any, AsyncIterator, Callable, Awaitable
 
 from backend.agents.handler import agent_handler
 from backend.memory.wisdom import WisdomItem, wisdom_store
+from backend.orchestration.plan_store import PlanStatus, plan_store
 from backend.schemas.ws import WSAgentSwitch, WSError, WSTurnEnd
 
 logger = logging.getLogger("tenderclaw.orchestration.pipeline")
@@ -31,6 +32,7 @@ class TeamPipeline:
         session: Any = None,  # SessionData | None — for abort checks
     ) -> AsyncIterator[dict[str, Any]]:
         pipeline_id = f"pipeline_{uuid.uuid4().hex[:8]}"
+        session_id = getattr(session, "session_id", "unknown")
         all_issues: list[str] = []
 
         def aborted() -> bool:
@@ -49,38 +51,53 @@ class TeamPipeline:
             yield WSError(error="Pipeline aborted by user", code="aborted").model_dump()
             return
 
-        # Inject relevant wisdom into planning context
+        # Inject relevant wisdom + past plans into planning context
         wisdom_ctx = _format_wisdom(wisdom_store.find_relevant(task))
+        past_plans_ctx = plan_store.format_similar_for_prompt(task)
 
         # Stage 2: Planning
         logger.info("[%s] Stage 2: Metis (planning)", pipeline_id)
         await send(WSAgentSwitch(agent_name="metis", task="planning").model_dump())
-        plan = await self._run_agent(
+        plan_content = await self._run_agent(
             "metis",
             messages,
-            f"Create a detailed implementation plan for: {task}\n\nResearch:\n{research}{wisdom_ctx}",
+            f"Create a detailed implementation plan for: {task}\n\nResearch:\n{research}{wisdom_ctx}{past_plans_ctx}",
             send,
         )
         if aborted():
             yield WSError(error="Pipeline aborted by user", code="aborted").model_dump()
             return
 
+        # Checkpoint plan
+        stored_plan = plan_store.create(
+            session_id=session_id,
+            task=task,
+            plan_content=plan_content,
+            pipeline_id=pipeline_id,
+            research_summary=research[:500],
+        )
+        plan_store.update_status(stored_plan.plan_id, PlanStatus.ACTIVE)
+
         # Stage 3: Execution
         logger.info("[%s] Stage 3: Sisyphus (execution)", pipeline_id)
         await send(WSAgentSwitch(agent_name="sisyphus", task="implementing").model_dump())
+        plan_store.update_status(stored_plan.plan_id, PlanStatus.EXECUTING)
         async for part in agent_handler.execute_agent_turn(
             "sisyphus",
-            messages + [{"role": "user", "content": f"Execute this plan:\n{plan}\n\nUse tools to implement."}],
+            messages + [{"role": "user", "content": f"Execute this plan:\n{plan_content}\n\nUse tools to implement."}],
         ):
             if part.get("type") == "assistant_text":
                 yield part
         if aborted():
+            plan_store.update_status(stored_plan.plan_id, PlanStatus.ABANDONED)
             yield WSError(error="Pipeline aborted by user", code="aborted").model_dump()
             return
 
         # Stages 4-5: Verify → Fix loop
+        plan_store.update_status(stored_plan.plan_id, PlanStatus.VERIFYING)
         for attempt in range(1, MAX_FIX_ATTEMPTS + 1):
             if aborted():
+                plan_store.update_status(stored_plan.plan_id, PlanStatus.ABANDONED)
                 yield WSError(error="Pipeline aborted by user", code="aborted").model_dump()
                 return
 
@@ -99,9 +116,16 @@ class TeamPipeline:
                 break
 
             all_issues.extend(issues)
+            plan_store.record_fix_attempt(stored_plan.plan_id, issues)
 
             if attempt == MAX_FIX_ATTEMPTS:
                 logger.warning("[%s] Max fix attempts reached", pipeline_id)
+                plan_store.update_status(
+                    stored_plan.plan_id,
+                    PlanStatus.FAILED,
+                    issues=issues,
+                    metadata={"reason": "max_fix_attempts"},
+                )
                 yield WSError(
                     error=f"Max fix attempts reached. Remaining issues: {issues}",
                     code="max_fix_attempts",
@@ -118,6 +142,7 @@ class TeamPipeline:
                     yield part
 
         if aborted():
+            plan_store.update_status(stored_plan.plan_id, PlanStatus.ABANDONED)
             yield WSError(error="Pipeline aborted by user", code="aborted").model_dump()
             return
 
@@ -131,8 +156,10 @@ class TeamPipeline:
             if part.get("type") == "assistant_text":
                 yield part
 
-        # Record wisdom
-        _record_wisdom(task, plan, all_issues)
+        # Record wisdom + finalize plan
+        _record_wisdom(task, plan_content, all_issues)
+        score = 1.0 if not all_issues else max(0.3, 1.0 - len(all_issues) * 0.1)
+        plan_store.complete(stored_plan.plan_id, success_score=score)
 
         await send(WSAgentSwitch(agent_name="sisyphus", task="complete").model_dump())
         yield WSTurnEnd(stop_reason="pipeline_complete").model_dump()
