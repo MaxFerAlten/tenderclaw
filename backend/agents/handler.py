@@ -32,9 +32,14 @@ class AgentHandler:
         system_override: str = "",
         model_override: str = "",
     ) -> AsyncIterator[dict[str, Any]]:
+        from backend.core.system_prompt import build_system_prompt
+
         agent = agent_registry.get(agent_name)
         model = model_override or agent.default_model
-        system = system_override or agent.system_prompt
+
+        base_system = system_override or agent.system_prompt
+        # Inject the skills instruction into all sub-agents
+        system = build_system_prompt(append=base_system)
 
         available_tools = tool_registry.list_api_schemas()
         if agent.tools:

@@ -170,8 +170,9 @@ def build_skills_instruction() -> str:
     for s in skills:
         trigger = f" (trigger: {s['trigger']})" if s.get("trigger") else ""
         instruction += f"- **{s['name']}**{trigger}: {s['description']}\n"
+        instruction += f"  Path: `{s['path']}`\n"
 
-    instruction += "\nTo read a skill, use `Read` on its path listed above."
+    instruction += "\nTo read a skill, use the `Read` tool on its path listed above."
     return instruction
 
 
