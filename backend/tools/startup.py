@@ -25,6 +25,8 @@ def register_builtin_tools(registry: ToolRegistry) -> None:
         LspDiagnosticsTool,
     )
 
+    from backend.tools.canvas_tool import CanvasTool
+
     tools = [
         BashTool(),
         FileReadTool(),
@@ -40,6 +42,7 @@ def register_builtin_tools(registry: ToolRegistry) -> None:
         LspGotoDefinitionTool(),
         LspFindReferencesTool(),
         LspDiagnosticsTool(),
+        CanvasTool(),
     ]
 
     for tool in tools:

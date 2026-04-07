@@ -52,6 +52,7 @@ class SessionState(BaseModel):
     working_directory: str = ""
     system_prompt_append: str = ""
     should_abort: bool = False
+    artifacts: dict[str, dict[str, str]] = Field(default_factory=dict)
 
     def to_info(self) -> SessionInfo:
         """Convert to public-facing SessionInfo."""
