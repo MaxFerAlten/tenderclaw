@@ -79,3 +79,57 @@ async def lmstudio_health(base_url: str | None = None) -> Dict[str, str]:
     except Exception as exc:
         logger.error("LM Studio diagnostics error: %s", exc)
         return {"status": "error", "base_url": base, "detail": str(exc)}
+
+
+@router.get("/openrouter/models", tags=["diagnostics"])
+async def openrouter_models() -> list[str]:
+    """Return list of models available via OpenRouter."""
+    from backend.config import settings
+    from backend.api.config import _global_config
+
+    key = settings.openrouter_api_key or _global_config.get("openrouter_api_key", "")
+    if not key:
+        return []
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                "https://openrouter.ai/api/v1/models",
+                headers={"Authorization": f"Bearer {key}"},
+            )
+            if resp.status_code != 200:
+                return []
+            data = resp.json()
+            return [m.get("id", "") for m in data.get("data", []) if m.get("id")]
+    except Exception as exc:
+        logger.error("OpenRouter models fetch error: %s", exc)
+        return []
+
+
+@router.get("/opencode/models", tags=["diagnostics"])
+async def opencode_models() -> list[str]:
+    """Return list of models available via OpenCode."""
+    from backend.config import settings
+    from backend.api.config import _global_config
+
+    key = settings.opencode_api_key or _global_config.get("opencode_api_key", "")
+    if not key:
+        return []
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                "https://opencode.ai/zen/v1/models",
+                headers={"Authorization": f"Bearer {key}"},
+            )
+            if resp.status_code != 200:
+                return []
+            data = resp.json()
+            # API returns IDs like "opencode/model-name" — strip the namespace prefix
+            # so the model name stored in sessions matches what the API expects
+            return [
+                m["id"].removeprefix("opencode/")
+                for m in data.get("data", [])
+                if m.get("id")
+            ]
+    except Exception as exc:
+        logger.error("OpenCode models fetch error: %s", exc)
+        return []

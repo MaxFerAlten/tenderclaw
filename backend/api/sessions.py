@@ -7,12 +7,35 @@ import logging
 from fastapi import APIRouter, HTTPException, Response
 
 from backend.schemas.sessions import SessionCreate, SessionInfo
-from backend.services.session_store import session_store
+from backend.services.session_store import SessionData, session_store
 from backend.utils.errors import SessionNotFoundError
 from fastapi import HTTPException
 
 logger = logging.getLogger("tenderclaw.api.sessions")
 router = APIRouter()
+
+_current_session_id: str = ""
+
+
+def set_current_session(session_id: str) -> None:
+    """Set the current active session ID."""
+    global _current_session_id
+    _current_session_id = session_id
+
+
+def get_current_session() -> "SessionData | None":
+    """Get the current active session."""
+    if _current_session_id:
+        try:
+            return session_store.get(_current_session_id)
+        except SessionNotFoundError:
+            pass
+    return None
+
+
+def get_current_session_id() -> str:
+    """Get the current active session ID."""
+    return _current_session_id
 
 
 @router.post("", response_model=SessionInfo, status_code=201)

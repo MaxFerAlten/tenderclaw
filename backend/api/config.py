@@ -7,7 +7,9 @@ The global _session_config is kept only as a fallback for keyless sessions
 
 from __future__ import annotations
 
+import json
 import logging
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter
@@ -16,6 +18,8 @@ from pydantic import BaseModel
 logger = logging.getLogger("tenderclaw.api.config")
 router = APIRouter()
 
+_GLOBAL_CONFIG_PATH = Path(".tenderclaw") / "global_config.json"
+
 
 class ConfigUpdate(BaseModel):
     anthropic_api_key: str | None = None
@@ -23,10 +27,11 @@ class ConfigUpdate(BaseModel):
     google_api_key: str | None = None
     xai_api_key: str | None = None
     deepseek_api_key: str | None = None
+    openrouter_api_key: str | None = None
+    opencode_api_key: str | None = None
     ollama_base_url: str | None = None
     lmstudio_base_url: str | None = None
     default_model: str | None = None
-    # Optional: target a specific session
     session_id: str | None = None
 
 
@@ -36,6 +41,8 @@ class ConfigResponse(BaseModel):
     google_configured: bool = False
     xai_configured: bool = False
     deepseek_configured: bool = False
+    openrouter_configured: bool = False
+    opencode_configured: bool = False
     ollama_base_url: str = ""
     lmstudio_base_url: str = ""
     default_model: str = ""
@@ -48,9 +55,39 @@ _global_config: dict[str, Any] = {
     "google_api_key": "",
     "xai_api_key": "",
     "deepseek_api_key": "",
+    "openrouter_api_key": "",
+    "opencode_api_key": "",
     "ollama_base_url": "",
     "lmstudio_base_url": "",
 }
+
+
+def _load_global_config() -> None:
+    """Load persisted global config from disk into _global_config."""
+    if not _GLOBAL_CONFIG_PATH.exists():
+        return
+    try:
+        data = json.loads(_GLOBAL_CONFIG_PATH.read_text(encoding="utf-8"))
+        for key in _global_config:
+            if key in data and data[key]:
+                _global_config[key] = data[key]
+    except Exception as exc:
+        logger.warning("Failed to load global config from disk: %s", exc)
+
+
+def _save_global_config() -> None:
+    """Persist _global_config to disk."""
+    try:
+        _GLOBAL_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _GLOBAL_CONFIG_PATH.write_text(
+            json.dumps(_global_config, indent=2), encoding="utf-8"
+        )
+    except Exception as exc:
+        logger.warning("Failed to save global config to disk: %s", exc)
+
+
+# Load on module import
+_load_global_config()
 
 _PROVIDER_KEY_MAP = {
     "anthropic": "anthropic_api_key",
@@ -58,6 +95,8 @@ _PROVIDER_KEY_MAP = {
     "google": "google_api_key",
     "xai": "xai_api_key",
     "deepseek": "deepseek_api_key",
+    "openrouter": "openrouter_api_key",
+    "opencode": "opencode_api_key",
 }
 
 
@@ -70,6 +109,8 @@ async def get_config() -> ConfigResponse:
         google_configured=bool(settings.google_api_key or _global_config.get("google_api_key")),
         xai_configured=bool(settings.xai_api_key or _global_config.get("xai_api_key")),
         deepseek_configured=bool(settings.deepseek_api_key or _global_config.get("deepseek_api_key")),
+        openrouter_configured=bool(settings.openrouter_api_key or _global_config.get("openrouter_api_key")),
+        opencode_configured=bool(settings.opencode_api_key or _global_config.get("opencode_api_key")),
         ollama_base_url=_global_config.get("ollama_base_url") or settings.ollama_base_url,
         lmstudio_base_url=_global_config.get("lmstudio_base_url") or settings.lmstudio_base_url,
         default_model=settings.default_model,
@@ -91,21 +132,153 @@ async def update_config(config: ConfigUpdate) -> dict[str, str]:
                 provider = next((p for p, k in _PROVIDER_KEY_MAP.items() if k == field), None)
                 if provider:
                     session.set_api_key(provider, value)
+                    session.model_config[field] = value
                 elif field == "ollama_base_url":
                     session.model_config["ollama_url"] = value
                 elif field == "lmstudio_base_url":
                     session.model_config["lmstudio_url"] = value
             logger.info("Session %s config updated: %s", config.session_id, list(updates.keys()))
         except SessionNotFoundError:
-            return {"status": "error", "message": f"Session not found: {config.session_id}"}
-    else:
-        # Update global fallback config
-        for field, value in updates.items():
-            if field in _global_config:
-                _global_config[field] = value
-        logger.info("Global config updated: %s", list(updates.keys()))
+            pass
+    
+    # ALWAYS update global config as fallback
+    for field, value in updates.items():
+        if field in _global_config:
+            _global_config[field] = value
+    logger.info("Global config updated: %s", list(updates.keys()))
+    _save_global_config()
 
     return {"status": "ok", "message": "Configuration updated"}
+
+
+@router.get("/config/status")
+async def get_config_status() -> dict[str, dict[str, object]]:
+    """Return per-provider configuration status (key set + validated)."""
+    from backend.config import settings
+
+    providers = {
+        "anthropic": settings.anthropic_api_key or _global_config.get("anthropic_api_key", ""),
+        "openai": settings.openai_api_key or _global_config.get("openai_api_key", ""),
+        "google": settings.google_api_key or _global_config.get("google_api_key", ""),
+        "xai": settings.xai_api_key or _global_config.get("xai_api_key", ""),
+        "deepseek": settings.deepseek_api_key or _global_config.get("deepseek_api_key", ""),
+        "openrouter": settings.openrouter_api_key or _global_config.get("openrouter_api_key", ""),
+        "opencode": settings.opencode_api_key or _global_config.get("opencode_api_key", ""),
+    }
+    # Validation results are stored per-request in _validated_providers
+    return {
+        provider: {
+            "configured": bool(key),
+            "validated": _validated_providers.get(provider, False),
+            "error": _validation_errors.get(provider, ""),
+        }
+        for provider, key in providers.items()
+    }
+
+
+@router.patch("/config/validate/{provider}")
+async def validate_provider(provider: str) -> dict[str, object]:
+    """Make a cheap probe call to validate a provider's API key."""
+    key = get_session_api_key(provider)
+    if not key:
+        return {"ok": False, "error": "No API key configured"}
+
+    try:
+        ok, error = await _probe_provider(provider, key)
+        _validated_providers[provider] = ok
+        _validation_errors[provider] = error if not ok else ""
+        return {"ok": ok, "error": error}
+    except Exception as exc:
+        _validation_errors[provider] = str(exc)
+        return {"ok": False, "error": str(exc)}
+
+
+async def _probe_provider(provider: str, key: str) -> tuple[bool, str]:
+    """Make a minimal API call to check if the key is valid."""
+    import httpx
+
+    headers = {"Content-Type": "application/json"}
+    try:
+        if provider == "anthropic":
+            async with httpx.AsyncClient(timeout=10) as client:
+                r = await client.get(
+                    "https://api.anthropic.com/v1/models",
+                    headers={"x-api-key": key, "anthropic-version": "2023-06-01"},
+                )
+                if r.status_code == 200:
+                    return True, ""
+                return False, f"HTTP {r.status_code}"
+
+        elif provider == "openai":
+            async with httpx.AsyncClient(timeout=10) as client:
+                r = await client.get(
+                    "https://api.openai.com/v1/models",
+                    headers={"Authorization": f"Bearer {key}"},
+                )
+                if r.status_code == 200:
+                    return True, ""
+                return False, f"HTTP {r.status_code}"
+
+        elif provider == "google":
+            async with httpx.AsyncClient(timeout=10) as client:
+                r = await client.get(
+                    f"https://generativelanguage.googleapis.com/v1beta/models?key={key}",
+                )
+                if r.status_code == 200:
+                    return True, ""
+                return False, f"HTTP {r.status_code}"
+
+        elif provider == "xai":
+            async with httpx.AsyncClient(timeout=10) as client:
+                r = await client.get(
+                    "https://api.x.ai/v1/models",
+                    headers={"Authorization": f"Bearer {key}"},
+                )
+                if r.status_code == 200:
+                    return True, ""
+                return False, f"HTTP {r.status_code}"
+
+        elif provider == "deepseek":
+            async with httpx.AsyncClient(timeout=10) as client:
+                r = await client.get(
+                    "https://api.deepseek.com/models",
+                    headers={"Authorization": f"Bearer {key}"},
+                )
+                if r.status_code == 200:
+                    return True, ""
+                return False, f"HTTP {r.status_code}"
+
+        elif provider == "openrouter":
+            async with httpx.AsyncClient(timeout=10) as client:
+                r = await client.get(
+                    "https://openrouter.ai/api/v1/models",
+                    headers={"Authorization": f"Bearer {key}"},
+                )
+                if r.status_code == 200:
+                    return True, ""
+                return False, f"HTTP {r.status_code}"
+
+        elif provider == "opencode":
+            async with httpx.AsyncClient(timeout=10) as client:
+                r = await client.get(
+                    "https://opencode.ai/zen/v1/models",
+                    headers={"Authorization": f"Bearer {key}"},
+                )
+                if r.status_code == 200:
+                    return True, ""
+                return False, f"HTTP {r.status_code}"
+
+        return False, f"Unknown provider: {provider}"
+
+    except httpx.TimeoutException:
+        return False, "Timeout — provider unreachable"
+    except Exception as exc:
+        return False, str(exc)
+
+
+# In-memory validation cache (reset on server restart)
+_validated_providers: dict[str, bool] = {}
+_validation_errors: dict[str, str] = {}
 
 
 def get_session_api_key(provider: str, session_id: str | None = None) -> str | None:
@@ -136,6 +309,8 @@ def get_session_api_key(provider: str, session_id: str | None = None) -> str | N
         "google": settings.google_api_key,
         "xai": settings.xai_api_key,
         "deepseek": settings.deepseek_api_key,
+        "openrouter": settings.openrouter_api_key,
+        "opencode": settings.opencode_api_key,
     }
     return env_map.get(provider) or None
 
