@@ -27,6 +27,7 @@ from backend.api.ralph_api import router as ralph_router
 from backend.api.keywords_api import router as keywords_router
 from backend.api.modes_api import router as modes_router
 from backend.api.oauth_api import router as oauth_router
+from backend.api.notifications_api import router as notifications_router
 
 api_router = APIRouter()
 
@@ -53,3 +54,4 @@ api_router.include_router(ralph_router, tags=["ralph"])
 api_router.include_router(keywords_router, tags=["keywords"])
 api_router.include_router(modes_router, tags=["mode"])
 api_router.include_router(oauth_router, tags=["oauth"])
+api_router.include_router(notifications_router, tags=["notifications"])

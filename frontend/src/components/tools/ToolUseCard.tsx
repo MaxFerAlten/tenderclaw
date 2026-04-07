@@ -41,7 +41,10 @@ export function ToolUseCard({ block }: Props) {
 
   // tool_result
   const isError = block.is_error;
-  const content = block.content;
+  let content = block.content;
+  if (!content || content === "{}") {
+    content = isError ? "Tool execution failed or denied" : "No output";
+  }
   const truncated = content.length > 300;
 
   return (

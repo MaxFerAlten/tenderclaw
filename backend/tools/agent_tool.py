@@ -58,21 +58,41 @@ class AgentDelegateTool(BaseTool):
 
     async def execute(self, tool_input: dict[str, Any], context: ToolContext) -> ToolResult:
         """Perform the actual delegation to the agent handler."""
-        # Note: In a real implementation we would import here to avoid circular dependencies
-        from backend.agents.handler import agent_handler
-        from backend.agents.registry import agent_registry
-        from backend.schemas.ws import WSAgentSwitch
+        try:
+            from backend.agents.handler import agent_handler
+            from backend.agents.registry import agent_registry
+            from backend.schemas.ws import WSAgentSwitch
+        except Exception as exc:
+            return ToolResult(
+                tool_use_id=context.tool_use_id,
+                content=f"Import error: {exc}",
+                is_error=True,
+            )
 
         agent_name = tool_input.get("agent", "").lower()
         task = tool_input.get("task", "")
         extra_context = tool_input.get("context", "")
+
+        if not agent_name:
+            return ToolResult(
+                tool_use_id=context.tool_use_id,
+                content="Missing agent name",
+                is_error=True,
+            )
+
+        if not task:
+            return ToolResult(
+                tool_use_id=context.tool_use_id,
+                content="Missing task description",
+                is_error=True,
+            )
 
         try:
             agent = agent_registry.get(agent_name)
         except ValueError as exc:
             return ToolResult(
                 tool_use_id=context.tool_use_id,
-                content=str(exc),
+                content=f"Unknown agent: {agent_name}. Available: sisyphus, oracle, explorer, fixer, sentinel",
                 is_error=True,
             )
 
@@ -87,18 +107,28 @@ class AgentDelegateTool(BaseTool):
         prompt = f"Executing task: {task}\nContext: {extra_context}"
         sub_messages = [{"role": "user", "content": prompt}]
 
-        # Run the agent turn. Note: In Phase 3, this is sequential. 
+        # Run the agent turn. Note: In Phase 3, this is sequential.
         # Future phases will support background parallel execution with callbacks.
         results = []
-        async for part in agent_handler.execute_agent_turn(
-            agent_name=agent_name,
-            messages=sub_messages,
-        ):
-            if part.get("type") == "assistant_text":
-                results.append(part["delta"])
+        try:
+            async for part in agent_handler.execute_agent_turn(
+                agent_name=agent_name,
+                messages=sub_messages,
+            ):
+                if part.get("type") == "assistant_text":
+                    results.append(part["delta"])
+                elif part.get("type") == "error":
+                    results.append(f"[ERROR] {part.get('error')}")
+        except Exception as exc:
+            logger.error("DelegateTask failed: %s", exc)
+            return ToolResult(
+                tool_use_id=context.tool_use_id,
+                content=f"Delegation failed: {exc}",
+                is_error=True,
+            )
 
         final_response = "".join(results)
-        
+
         # Switch back to sisyphus
         if context.send:
             await context.send(WSAgentSwitch(agent_name="sisyphus").model_dump())

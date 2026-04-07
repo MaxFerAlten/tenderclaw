@@ -25,6 +25,7 @@ DEFAULT_SKILLS_PATHS = [
 @dataclass
 class Skill:
     """Structured skill metadata parsed from SKILL.md."""
+
     name: str
     path: Path
     trigger: str = ""
@@ -67,6 +68,14 @@ def get_registry() -> SkillRegistry:
         _skill_registry = SkillRegistry()
         discover_skills(_skill_registry)
     return _skill_registry
+
+
+def add_skills_path(path: str | Path) -> None:
+    """Add a skills path to the default search paths."""
+    p = Path(path)
+    if p.exists() and p not in DEFAULT_SKILLS_PATHS:
+        DEFAULT_SKILLS_PATHS.append(p)
+        logger.info("Added skills path: %s", p)
 
 
 def discover_skills(registry: SkillRegistry, paths: list[Path] | None = None) -> None:

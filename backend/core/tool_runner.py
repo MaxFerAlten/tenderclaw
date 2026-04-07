@@ -22,7 +22,7 @@ from backend.tools.base import ToolContext
 from backend.tools.execution import execute_tool
 from backend.tools.registry import tool_registry
 from backend.telemetry.tracing import get_tracer, SpanKind
-from backend.telemetry.metrics import metrics as telemetry_metrics
+from backend.telemetry.metrics import Metrics
 from opentelemetry.trace import Status, StatusCode
 
 logger = logging.getLogger("tenderclaw.core.tool_runner")
@@ -31,7 +31,7 @@ tracer = get_tracer("tenderclaw.tool_runner")
 
 SendFn = Callable[[dict[str, Any]], Awaitable[None]]
 
-PERMISSION_TIMEOUT_SECS = 120
+PERMISSION_TIMEOUT_SECS = 30
 
 
 async def run_tool_uses(
@@ -58,17 +58,21 @@ async def run_tool_uses(
                     break
 
                 result = await _run_single(tu, session, message_id, send)
-                results.append(ToolResultBlock(
-                    tool_use_id=tu.id,
-                    content=result.content,
-                    is_error=result.is_error,
-                ))
-                await send(WSToolResult(
-                    tool_use_id=tu.id,
-                    tool_name=tu.name,
-                    content=result.content,
-                    is_error=result.is_error,
-                ).model_dump())
+                results.append(
+                    ToolResultBlock(
+                        tool_use_id=tu.id,
+                        content=result.content,
+                        is_error=result.is_error,
+                    )
+                )
+                await send(
+                    WSToolResult(
+                        tool_use_id=tu.id,
+                        tool_name=tu.name,
+                        content=result.content,
+                        is_error=result.is_error,
+                    ).model_dump()
+                )
 
             batch_span.set_status(Status(StatusCode.OK))
         except Exception as exc:
@@ -100,13 +104,13 @@ async def _run_single(
         try:
             result = await _execute_tool_with_tracing(tu, session, message_id, send)
             duration_ms = (time.perf_counter() - tool_start) * 1000
-            telemetry_metrics.record_response_time(duration_ms, {"tool_name": tu.name})
-            telemetry_metrics.increment_tool_call(tu.name, success=not result.is_error)
+            Metrics.record_response_time(duration_ms, {"tool_name": tu.name})
+            Metrics.increment_tool_call(tu.name, success=not result.is_error)
             span.set_status(Status(StatusCode.OK))
             return result
         except Exception as exc:
-            telemetry_metrics.increment_tool_call(tu.name, success=False)
-            telemetry_metrics.increment_error("tool_execution", {"tool_name": tu.name})
+            Metrics.increment_tool_call(tu.name, success=False)
+            Metrics.increment_error("tool_execution", {"tool_name": tu.name})
             span.set_status(Status(StatusCode.ERROR, str(exc)))
             span.record_exception(exc)
             raise
@@ -119,9 +123,7 @@ async def _execute_tool_with_tracing(
     send: SendFn,
 ) -> ToolResult:
     """Internal tool execution with dispatch hooks."""
-    permission_mode = PermissionMode(
-        session.model_config.get("permission_mode", PermissionMode.DEFAULT)
-    )
+    permission_mode = PermissionMode(session.model_config.get("permission_mode", PermissionMode.DEFAULT))
     decision = check_permission(tu.name, tu.input, mode=permission_mode)
 
     if decision == PermissionDecision.DENY:
@@ -137,7 +139,7 @@ async def _execute_tool_with_tracing(
         if not approved:
             return ToolResult(
                 tool_use_id=tu.id,
-                content=f"Tool '{tu.name}' was denied by the user.",
+                content=f"Tool '{tu.name}' richiede permesso ma è stato negato o non approvato.",
                 is_error=True,
             )
 
@@ -178,12 +180,14 @@ async def _ask_user(tu: ToolUseBlock, session: SessionData, send: SendFn) -> boo
     risk = tool.risk_level.value if tool else "medium"
 
     event = session.register_permission_request(tu.id)
-    await send(WSPermissionRequest(
-        tool_use_id=tu.id,
-        tool_name=tu.name,
-        tool_input=tu.input,
-        risk_level=risk,
-    ).model_dump())
+    await send(
+        WSPermissionRequest(
+            tool_use_id=tu.id,
+            tool_name=tu.name,
+            tool_input=tu.input,
+            risk_level=risk,
+        ).model_dump()
+    )
 
     try:
         await asyncio.wait_for(event.wait(), timeout=PERMISSION_TIMEOUT_SECS)

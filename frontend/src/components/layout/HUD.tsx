@@ -5,11 +5,15 @@
  * - Pipeline stage tracker (Oracle → Metis → Sisyphus → Momus → Fixer → Sentinel)
  * - Active tool execution list with status badges
  * - Turn counter and elapsed time
+ * - Thinking indicator with phase visualization
+ * - Notification bell with unread count
+ * - Tool progress streaming
  * - Collapsible design with smooth animations
  */
 
 import { useState, useEffect } from "react";
 import { useSessionStore } from "../../stores/sessionStore";
+import { useNotificationStore } from "../../stores/notificationStore";
 import type { PipelineStageState } from "../../stores/sessionStore";
 import {
   Activity,
@@ -27,6 +31,9 @@ import {
   Eye,
   Wrench,
   Shield,
+  Bell,
+  Brain,
+  BrainCircuit,
 } from "lucide-react";
 
 const STAGE_META: Record<string, { label: string; icon: typeof Search }> = {
@@ -69,7 +76,6 @@ function StageIcon({ stage, status }: { stage: string; status: string }) {
       </div>
     );
   }
-  // pending
   return (
     <div className="p-1 rounded-md bg-zinc-800/50">
       <Icon className="w-3 h-3 text-zinc-600" />
@@ -112,6 +118,47 @@ function PipelineTracker({ stages }: { stages: PipelineStageState[] }) {
   );
 }
 
+function ThinkingIndicator({ agentName, phase, progressPct, detail }: {
+  agentName: string;
+  phase: string;
+  progressPct: number;
+  detail: string;
+}) {
+  const phaseLabel: Record<string, string> = {
+    analyzing: "Analyzing",
+    planning: "Planning",
+    reasoning: "Reasoning",
+    synthesizing: "Synthesizing",
+  };
+
+  return (
+    <div className="flex flex-col gap-1.5 border-t border-zinc-800/50 pt-2">
+      <div className="flex items-center gap-2">
+        <BrainCircuit className="w-3.5 h-3.5 text-violet-400 animate-pulse" />
+        <span className="text-[10px] font-medium text-violet-300 uppercase tracking-wide">
+          {phaseLabel[phase] ?? phase}
+        </span>
+        <span className="text-[9px] text-zinc-500 ml-auto">
+          {agentName}
+        </span>
+      </div>
+
+      {progressPct > 0 && (
+        <div className="h-1 bg-zinc-800 rounded-full overflow-hidden">
+          <div
+            className="h-full bg-gradient-to-r from-violet-500 to-indigo-500 rounded-full transition-all duration-500 ease-out"
+            style={{ width: `${Math.min(progressPct, 100)}%` }}
+          />
+        </div>
+      )}
+
+      {detail && (
+        <p className="text-[9px] text-zinc-500 italic truncate">{detail}</p>
+      )}
+    </div>
+  );
+}
+
 export function HUD() {
   const activeTools = useSessionStore((s) => s.activeTools);
   const status = useSessionStore((s) => s.status);
@@ -121,13 +168,16 @@ export function HUD() {
   const turnCount = useSessionStore((s) => s.turnCount);
   const turnStartedAt = useSessionStore((s) => s.turnStartedAt);
 
+  const thinking = useNotificationStore((s) => s.thinking);
+  const unreadCount = useNotificationStore((s) => s.unreadCount);
+  const togglePanel = useNotificationStore((s) => s.togglePanel);
+
   const [collapsed, setCollapsed] = useState(false);
   const [elapsed, setElapsed] = useState(0);
 
   const toolList = Array.from(activeTools.values()).slice(-5).reverse();
   const hasActivity = toolList.length > 0 || status === "busy" || pipelineActive;
 
-  // Elapsed time ticker
   useEffect(() => {
     if (status !== "busy" || !turnStartedAt) {
       setElapsed(0);
@@ -163,6 +213,29 @@ export function HUD() {
           </div>
 
           <div className="flex items-center gap-2">
+            {/* Notification bell */}
+            <button
+              onClick={(e) => { e.stopPropagation(); togglePanel(); }}
+              className="relative p-1 rounded-lg hover:bg-zinc-800/50 transition-colors"
+            >
+              <Bell className="w-3.5 h-3.5 text-zinc-400" />
+              {unreadCount > 0 && (
+                <span className="absolute -top-0.5 -right-0.5 w-3.5 h-3.5 bg-rose-500 rounded-full text-[8px] font-bold text-white flex items-center justify-center animate-bounce">
+                  {unreadCount > 9 ? "9+" : unreadCount}
+                </span>
+              )}
+            </button>
+
+            {/* Thinking indicator (compact) */}
+            {thinking?.active && (
+              <div className="flex items-center gap-1 bg-violet-500/10 border border-violet-500/20 rounded-full px-2 py-0.5">
+                <Brain className="w-2.5 h-2.5 text-violet-400 animate-pulse" />
+                <span className="text-[10px] font-mono text-violet-300">
+                  {thinking.phase}
+                </span>
+              </div>
+            )}
+
             {/* Turn counter */}
             {turnCount > 0 && (
               <div className="flex items-center gap-1 bg-zinc-800/50 rounded-full px-2 py-0.5 border border-zinc-700/30">
@@ -199,6 +272,16 @@ export function HUD() {
         {/* Collapsible body */}
         {!collapsed && (
           <div className="flex flex-col gap-3 px-3 pb-3">
+            {/* Thinking progress (expanded) */}
+            {thinking?.active && (
+              <ThinkingIndicator
+                agentName={thinking.agentName}
+                phase={thinking.phase}
+                progressPct={thinking.progressPct}
+                detail={thinking.detail}
+              />
+            )}
+
             {/* Pipeline Stages */}
             {pipelineActive && pipelineStages.length > 0 && (
               <div className="border-t border-zinc-800/50 pt-2">
@@ -247,7 +330,7 @@ export function HUD() {
               </div>
             )}
 
-            {toolList.length === 0 && !pipelineActive && (
+            {toolList.length === 0 && !pipelineActive && !thinking?.active && (
               <div className="py-3 text-center border-t border-zinc-800/50">
                 <p className="text-xs text-zinc-600 font-medium">Listening for commands...</p>
               </div>

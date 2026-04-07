@@ -8,6 +8,7 @@ import { Sidebar } from "./Sidebar";
 import { Header } from "./Header";
 import { HUD } from "./HUD";
 import { Canvas } from "./Canvas";
+import { NotificationToast } from "./NotificationToast";
 import { PermissionDialog } from "../tools/PermissionDialog";
 import { ws } from "../../api/ws";
 
@@ -28,9 +29,11 @@ export function AppShell({ sidebarOpen = true, onToggleSidebar }: AppShellProps)
           </div>
           <Canvas />
           <HUD />
+          <NotificationToast />
         </main>
       </div>
       <PermissionDialog sendPermissionResponse={(id, d) => ws.sendPermissionResponse(id, d)} />
     </div>
   );
 }
+

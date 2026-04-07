@@ -6,6 +6,7 @@
 import { create } from "zustand";
 import type { Message, ContentBlock, WSServerEvent } from "../api/types";
 import type { KeywordMapping } from "../api/keywordsApi";
+import { useNotificationStore } from "./notificationStore";
 
 interface Artifact {
   artifact_id: string;
@@ -312,6 +313,34 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
         set({ artifacts, activeArtifactId: event.artifact_id });
         break;
       }
+
+      case "notification": {
+        useNotificationStore.getState().addNotification({
+          id: event.id,
+          level: event.level as "info" | "success" | "warning" | "error",
+          category: event.category as "agent" | "tool" | "pipeline" | "system" | "security",
+          title: event.title,
+          body: event.body,
+          agentName: event.agent_name,
+          autoDismissMs: event.auto_dismiss_ms,
+        });
+        break;
+      }
+
+      case "thinking_progress": {
+        useNotificationStore.getState().setThinking({
+          agentName: event.agent_name,
+          phase: event.phase,
+          progressPct: event.progress_pct,
+          detail: event.detail,
+          active: true,
+        });
+        break;
+      }
+
+      case "assistant_thinking":
+        // Thinking deltas handled by streaming — no extra state needed
+        break;
 
       case "error":
         // Session was lost (backend restart) — reset so ChatView creates a new one

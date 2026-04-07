@@ -144,6 +144,25 @@ export interface WSUIUpdate {
   language?: string;
 }
 
+export interface WSNotification {
+  type: "notification";
+  id: string;
+  level: string;
+  category: string;
+  title: string;
+  body: string;
+  agent_name?: string;
+  auto_dismiss_ms: number;
+}
+
+export interface WSThinkingProgress {
+  type: "thinking_progress";
+  agent_name: string;
+  phase: string;
+  progress_pct: number;
+  detail: string;
+}
+
 export type WSServerEvent =
   | WSAssistantText
   | WSAssistantThinking
@@ -159,7 +178,9 @@ export type WSServerEvent =
   | WSCostUpdate
   | WSAgentSwitch
   | WSPipelineStage
-  | WSUIUpdate;
+  | WSUIUpdate
+  | WSNotification
+  | WSThinkingProgress;
 
 // === Tools ===
 

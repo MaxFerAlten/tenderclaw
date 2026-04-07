@@ -22,12 +22,18 @@ from backend.schemas.ws import (
     WSError,
     WSMessageEnd,
     WSMessageStart,
+    WSNotification,
     WSTurnEnd,
     WSTurnStart,
 )
 from backend.services.model_router import model_router
 from backend.services.cost_calculator import compute_cost
 from backend.services.cost_tracker import CostTracker
+from backend.services.notifications import (
+    NotificationCategory,
+    NotificationLevel,
+    notification_service,
+)
 from backend.tools.registry import tool_registry
 from backend.telemetry.tracing import get_tracer, add_span_attributes, SpanKind
 from backend.telemetry.metrics import Metrics
@@ -120,6 +126,13 @@ async def _run_conversation_turn_impl(
     except Exception as exc:
         logger.error("Unhandled error in agentic loop for %s: %s", session.session_id, exc, exc_info=True)
         Metrics.increment_error("agentic_loop_error", {"session_id": session.session_id})
+        notification_service.create(
+            title="Error in conversation",
+            body=str(exc)[:200],
+            level=NotificationLevel.ERROR,
+            category=NotificationCategory.SYSTEM,
+            session_id=session.session_id,
+        )
         try:
             await send(WSError(error=str(exc)).model_dump())
         except Exception:
@@ -202,6 +215,26 @@ async def _agentic_loop_impl(session: SessionData, send: SendFn, parent_span) ->
         )
         await send(WSTurnStart(turn_number=turn_number, agent_name="sisyphus").model_dump())
         await send(WSMessageStart(message_id=message_id).model_dump())
+
+        if turn_number == 1:
+            notif = notification_service.create(
+                title="Turn started",
+                body=f"Sisyphus processing (model: {session.model})",
+                level=NotificationLevel.INFO,
+                category=NotificationCategory.AGENT,
+                agent_name="sisyphus",
+                session_id=session.session_id,
+                auto_dismiss_ms=3000,
+            )
+            await send(WSNotification(
+                id=notif.id,
+                level=notif.level.value,
+                category=notif.category.value,
+                title=notif.title,
+                body=notif.body,
+                agent_name=notif.agent_name,
+                auto_dismiss_ms=notif.auto_dismiss_ms,
+            ).model_dump())
 
         collector = StreamCollector(message_id=message_id, send=send)
 

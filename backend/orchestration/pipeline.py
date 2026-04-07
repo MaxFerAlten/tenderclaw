@@ -14,7 +14,12 @@ from typing import Any, AsyncIterator, Callable, Awaitable
 from backend.agents.handler import agent_handler
 from backend.memory.wisdom import WisdomItem, wisdom_store
 from backend.orchestration.plan_store import PlanStatus, plan_store
-from backend.schemas.ws import WSAgentSwitch, WSError, WSPipelineStage, WSTurnEnd
+from backend.schemas.ws import WSAgentSwitch, WSError, WSNotification, WSPipelineStage, WSTurnEnd
+from backend.services.notifications import (
+    NotificationCategory,
+    NotificationLevel,
+    notification_service,
+)
 
 logger = logging.getLogger("tenderclaw.orchestration.pipeline")
 
@@ -23,6 +28,56 @@ MAX_FIX_ATTEMPTS = 3
 
 
 class TeamPipeline:
+
+    async def _notify_stage(
+        self,
+        send: SendFn,
+        agent_name: str,
+        status: str,
+        detail: str,
+        session_id: str = "unknown",
+    ) -> None:
+        """Emit pipeline stage + notification for the HUD."""
+        await send(WSPipelineStage(stage=agent_name, status=status, detail=detail).model_dump())
+        await send(WSAgentSwitch(agent_name=agent_name, task=detail).model_dump())
+
+        if status == "started":
+            notif = notification_service.create(
+                title=f"{agent_name.capitalize()} started",
+                body=detail,
+                level=NotificationLevel.INFO,
+                category=NotificationCategory.PIPELINE,
+                agent_name=agent_name,
+                session_id=session_id,
+                auto_dismiss_ms=4000,
+            )
+            await send(WSNotification(
+                id=notif.id,
+                level=notif.level.value,
+                category=notif.category.value,
+                title=notif.title,
+                body=notif.body,
+                agent_name=notif.agent_name,
+                auto_dismiss_ms=notif.auto_dismiss_ms,
+            ).model_dump())
+        elif status == "failed":
+            notif = notification_service.create(
+                title=f"{agent_name.capitalize()} failed",
+                body=detail,
+                level=NotificationLevel.ERROR,
+                category=NotificationCategory.PIPELINE,
+                agent_name=agent_name,
+                session_id=session_id,
+            )
+            await send(WSNotification(
+                id=notif.id,
+                level=notif.level.value,
+                category=notif.category.value,
+                title=notif.title,
+                body=notif.body,
+                agent_name=notif.agent_name,
+                auto_dismiss_ms=notif.auto_dismiss_ms,
+            ).model_dump())
 
     async def run_implement_pipeline(
         self,

@@ -192,6 +192,29 @@ class WSUIUpdate(BaseModel):
     language: str | None = None
 
 
+class WSNotification(BaseModel):
+    """Real-time notification for the HUD."""
+
+    type: Literal["notification"] = "notification"
+    id: str
+    level: str  # info, success, warning, error
+    category: str  # agent, tool, pipeline, system, security
+    title: str
+    body: str = ""
+    agent_name: str | None = None
+    auto_dismiss_ms: int = 5000
+
+
+class WSThinkingProgress(BaseModel):
+    """Agent thinking progress for HUD visualization."""
+
+    type: Literal["thinking_progress"] = "thinking_progress"
+    agent_name: str
+    phase: str  # analyzing, planning, reasoning, synthesizing
+    progress_pct: int = 0
+    detail: str = ""
+
+
 WSServerMessage = (
     WSAssistantText
     | WSAssistantThinking
@@ -208,4 +231,6 @@ WSServerMessage = (
     | WSAgentSwitch
     | WSPipelineStage
     | WSUIUpdate
+    | WSNotification
+    | WSThinkingProgress
 )
