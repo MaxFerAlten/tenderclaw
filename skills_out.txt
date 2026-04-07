@@ -1,0 +1,44 @@
+
+## Superpowers Skills
+You have access to specialized 'skills' for complex tasks.
+If a task matches one of these, you MUST read the SKILL.md file before proceeding:
+- **analyze**: Analyze — Evidence-Driven Investigation
+- **autopilot** (trigger: `/autopilot <task>` or "autopilot", "autonomous", "build me", "make me"): autopilot — Autonomous End-to-End Pipeline
+- **build-fix**: Build Fix Skill
+- **cancel**: Cancel Skill
+- **code-review**: Code Review
+- **deep-interview** (trigger: `/deep-interview <topic>` or "deep interview", "interview me", "ask me everything"): deep-interview — Socratic Requirements Gathering
+- **deepsearch**: Deep Search Skill
+- **doctor**: Doctor Skill
+- **ecomode**: Ecomode Skill
+- **git-master**: Git Master Skill
+- **plan**: Plan — Strategic Planning
+- **ralph**: Ralph - Autonomous Execution Loop
+- **review** (trigger: `/review [file_path | git diff]`): review — Code Review Skill
+- **security** (trigger: `/security [scope]`): security — Security Audit Skill
+- **security-review**: Security Review
+- **swarm**: Swarm Skill (Compatibility Facade)
+- **tdd**: TDD — Test-Driven Development
+- **team**: Team Skill
+- **trace**: Trace Skill
+- **ultraqa**: UltraQA — Autonomous QA Cycling
+- **ultrawork**: Ultrawork Skill
+- **visual-verdict**: Visual Verdict Skill
+- **web-clone**: Web Clone Skill
+- **worker**: Worker Skill
+- **brainstorming**: Brainstorming Ideas Into Designs
+- **dispatching-parallel-agents**: Dispatching Parallel Agents
+- **executing-plans**: Executing Plans
+- **finishing-a-development-branch**: Finishing a Development Branch
+- **receiving-code-review**: Code Review Reception
+- **requesting-code-review**: Requesting Code Review
+- **subagent-driven-development**: Subagent-Driven Development
+- **systematic-debugging**: Systematic Debugging
+- **test-driven-development**: Test-Driven Development (TDD)
+- **using-git-worktrees**: Using Git Worktrees
+- **using-superpowers**: Specialized workflow skill.
+- **verification-before-completion**: Verification Before Completion
+- **writing-plans**: Writing Plans
+- **writing-skills**: Writing Skills
+
+To read a skill, use `Read` on its path listed above.
