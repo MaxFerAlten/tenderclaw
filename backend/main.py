@@ -69,6 +69,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     # Initialize plugins
     _init_plugins()
     
+    # Initialize OAuth providers
+    _init_oauth()
+
     # Initialize channels (Telegram, Discord, etc.)
     _init_channels()
     
@@ -122,6 +125,27 @@ def _init_channels() -> None:
     if settings.discord_token:
         channels.discord_manager.start()
         logger.info("Discord channel initialized")
+
+
+def _init_oauth() -> None:
+    """Register OAuth providers from settings."""
+    from backend.services.oauth_provider import oauth_manager
+
+    if settings.github_client_id and settings.github_client_secret:
+        oauth_manager.register_from_settings(
+            "github",
+            client_id=settings.github_client_id,
+            client_secret=settings.github_client_secret,
+        )
+        logger.info("GitHub OAuth provider registered")
+
+    if settings.google_oauth_client_id and settings.google_oauth_client_secret:
+        oauth_manager.register_from_settings(
+            "google",
+            client_id=settings.google_oauth_client_id,
+            client_secret=settings.google_oauth_client_secret,
+        )
+        logger.info("Google OAuth provider registered")
 
 
 def _init_hooks() -> None:

@@ -51,6 +51,12 @@ class Settings(BaseSettings):
     otel_service_name: str = "tenderclaw"
     otel_enabled: bool = True
 
+    # OAuth
+    github_client_id: str = Field(default="", alias="GITHUB_CLIENT_ID")
+    github_client_secret: str = Field(default="", alias="GITHUB_CLIENT_SECRET")
+    google_oauth_client_id: str = Field(default="", alias="GOOGLE_OAUTH_CLIENT_ID")
+    google_oauth_client_secret: str = Field(default="", alias="GOOGLE_OAUTH_CLIENT_SECRET")
+
     # Remote Bridge
     bridge_host: str = "0.0.0.0"
     bridge_port: int = 7001
