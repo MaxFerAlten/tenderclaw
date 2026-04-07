@@ -88,9 +88,11 @@ class OpenCodeProvider(BaseProvider):
         try:
             stream = await self._client.chat.completions.create(**kwargs)
 
-            pending_tool_id: str | None = None
-            pending_tool_name: str = ""
-            started_tools: set[str] = set()
+            # Index-based accumulator: handles OpenAI streaming correctly for
+            # both single and parallel tool calls. Keys are tc.index (int).
+            # Each entry: {id, name, args_parts: list[str], emitted: bool}
+            tool_acc: dict[int, dict] = {}
+            got_text = False
 
             async for chunk in stream:
                 choice = chunk.choices[0] if chunk.choices else None
@@ -101,33 +103,54 @@ class OpenCodeProvider(BaseProvider):
 
                 if delta and delta.tool_calls:
                     for tc in delta.tool_calls:
-                        tc_id = tc.id or ""
-                        tc_name = tc.function.name or ""
-                        tc_args = tc.function.arguments or ""
+                        idx = tc.index if tc.index is not None else 0
+                        if idx not in tool_acc:
+                            tool_acc[idx] = {
+                                "id": tc.id or f"tool_{idx}_{id(chunk)}",
+                                "name": tc.function.name or "",
+                                "args_parts": [],
+                                "emitted": False,
+                            }
+                        entry = tool_acc[idx]
+                        # Name can arrive in the first chunk only
+                        if tc.id and not entry["id"]:
+                            entry["id"] = tc.id
+                        if tc.function.name:
+                            entry["name"] = tc.function.name
+                        if tc.function.arguments:
+                            entry["args_parts"].append(tc.function.arguments)
 
-                        if tc_name and not pending_tool_id:
-                            pending_tool_id = tc_id or f"tool_{id(tc)}"
-                            pending_tool_name = tc_name
-                            if pending_tool_id not in started_tools:
-                                started_tools.add(pending_tool_id)
-                                yield {
-                                    "type": "content_block_start",
-                                    "content_block": {
-                                        "type": "tool_use",
-                                        "id": pending_tool_id,
-                                        "name": pending_tool_name,
-                                    },
-                                }
-                        if tc_args:
+                        # Emit content_block_start as soon as we have a name
+                        if entry["name"] and not entry["emitted"]:
+                            entry["emitted"] = True
+                            logger.debug(
+                                "OpenCode tool_call start: idx=%d id=%s name=%s",
+                                idx, entry["id"], entry["name"],
+                            )
+                            yield {
+                                "type": "content_block_start",
+                                "content_block": {
+                                    "type": "tool_use",
+                                    "id": entry["id"],
+                                    "name": entry["name"],
+                                },
+                            }
+
+                        # Stream args delta (only if block already started)
+                        if entry["emitted"] and tc.function.arguments:
                             yield {
                                 "type": "content_block_delta",
-                                "index": 0,
-                                "delta": {"type": "input_json_delta", "partial_json": tc_args},
+                                "index": idx,
+                                "delta": {
+                                    "type": "input_json_delta",
+                                    "partial_json": tc.function.arguments,
+                                },
                             }
 
                 elif delta and delta.content:
                     text = delta.content
                     if text:
+                        got_text = True
                         yield {
                             "type": "content_block_delta",
                             "index": 0,
@@ -135,17 +158,24 @@ class OpenCodeProvider(BaseProvider):
                         }
 
                 if choice.finish_reason:
-                    if pending_tool_id:
-                        yield {"type": "content_block_stop"}
+                    # Close all open tool blocks in index order
+                    for _idx in sorted(tool_acc):
+                        entry = tool_acc[_idx]
+                        if entry["emitted"]:
+                            yield {"type": "content_block_stop"}
+                    tool_acc.clear()
+
+                    mapped = _map_finish_reason(choice.finish_reason)
+                    logger.debug("OpenCode finish_reason=%s → %s", choice.finish_reason, mapped)
                     yield {
                         "type": "message_delta",
-                        "delta": {"stop_reason": _map_finish_reason(choice.finish_reason)},
+                        "delta": {"stop_reason": mapped},
                     }
-                    pending_tool_id = None
-                    pending_tool_name = ""
 
-            if pending_tool_id:
-                yield {"type": "content_block_stop"}
+            # Safety: close any tool blocks not finished via finish_reason
+            for _idx in sorted(tool_acc):
+                if tool_acc[_idx]["emitted"]:
+                    yield {"type": "content_block_stop"}
 
             yield {
                 "type": "usage",

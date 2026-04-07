@@ -112,7 +112,13 @@ async def _run_conversation_turn_impl(
     intent = await _classify(user_content, session.model)
     add_span_attributes({"intent": intent})
 
-    if intent == "implement" and len(user_content) > 100:
+    # Only auto-route to the team pipeline for Anthropic-backed models.
+    # OpenCode / Ollama / other providers run the standard agentic loop —
+    # the team pipeline uses Anthropic sub-agents internally.
+    from backend.services.model_router import detect_provider
+    _provider = detect_provider(session.model)
+    _anthropic_native = _provider == "anthropic"
+    if _anthropic_native and intent == "implement" and len(user_content) > 100:
         await _run_team_pipeline(session, user_content, send)
         return
 

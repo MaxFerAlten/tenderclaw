@@ -31,7 +31,7 @@ tracer = get_tracer("tenderclaw.tool_runner")
 
 SendFn = Callable[[dict[str, Any]], Awaitable[None]]
 
-PERMISSION_TIMEOUT_SECS = 30
+PERMISSION_TIMEOUT_SECS = 300  # 5 min — gives user time to read & decide
 
 
 async def run_tool_uses(
@@ -192,7 +192,13 @@ async def _ask_user(tu: ToolUseBlock, session: SessionData, send: SendFn) -> boo
     try:
         await asyncio.wait_for(event.wait(), timeout=PERMISSION_TIMEOUT_SECS)
     except asyncio.TimeoutError:
-        logger.warning("Permission request timed out for tool %s", tu.name)
+        logger.warning(
+            "Permission request timed out after %ds for tool '%s' (session=%s). "
+            "Denying automatically — the agent will see an error result and may retry.",
+            PERMISSION_TIMEOUT_SECS,
+            tu.name,
+            session.session_id,
+        )
         session.clear_permission(tu.id)
         return False
 
