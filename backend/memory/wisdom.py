@@ -91,6 +91,49 @@ class WisdomStore:
         scored.sort(key=lambda x: x[0], reverse=True)
         return [item for _, item in scored[:limit]]
 
+    def find_relevant_contextual(
+        self,
+        messages: list[dict[str, object]],
+        limit: int = 5,
+    ) -> list["WisdomItem"]:
+        """Find wisdom relevant to a multi-turn conversation context.
+
+        Builds a composite keyword query from the last few messages, then
+        delegates to find_relevant for scoring.
+        """
+        from backend.memory.keyword_extractor import extract_keywords
+
+        texts: list[str] = []
+        for msg in messages[-4:]:
+            content = msg.get("content", "")
+            if isinstance(content, str):
+                texts.append(content)
+            elif isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        texts.append(block.get("text", ""))
+
+        composite = " ".join(texts)
+        if not composite.strip():
+            return []
+
+        keywords = extract_keywords(composite, top_n=12)
+        query = " ".join(keywords)
+        return self.find_relevant(query, limit=limit)
+
+    def format_for_prompt(self, items: list["WisdomItem"]) -> str:
+        """Format wisdom items as a compact markdown block for prompt injection."""
+        if not items:
+            return ""
+        lines = ["## Relevant Past Patterns"]
+        for item in items:
+            tag_str = ", ".join(item.tags[:3]) if item.tags else ""
+            line = f"- [{item.task_type}] {item.description}: {item.solution_pattern}"
+            if tag_str:
+                line += f" (tags: {tag_str})"
+            lines.append(line)
+        return "\n".join(lines)
+
     def record_usage(self, wisdom_id: str) -> None:
         """Record that a wisdom item was used."""
         for item in self._wisdom:

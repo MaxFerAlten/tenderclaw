@@ -33,6 +33,8 @@ class Settings(BaseSettings):
     google_api_key: str = Field(default="", alias="GOOGLE_API_KEY")
     xai_api_key: str = Field(default="", alias="XAI_API_KEY")
     deepseek_api_key: str = Field(default="", alias="DEEPSEEK_API_KEY")
+    openrouter_api_key: str = Field(default="", alias="OPENROUTER_API_KEY")
+    opencode_api_key: str = Field(default="", alias="OPENCODE_API_KEY")
 
     # Ollama
     ollama_base_url: str = "http://localhost:11434/v1"
@@ -43,6 +45,19 @@ class Settings(BaseSettings):
     # Channel integrations
     telegram_bot_token: str = Field(default="", alias="TELEGRAM_BOT_TOKEN")
     discord_token: str = Field(default="", alias="DISCORD_BOT_TOKEN")
+
+    # OpenTelemetry
+    otel_endpoint: str = Field(default="", alias="OTEL_EXPORTER_OTLP_ENDPOINT")
+    otel_service_name: str = "tenderclaw"
+    otel_enabled: bool = True
+
+    # Remote Bridge
+    bridge_host: str = "0.0.0.0"
+    bridge_port: int = 7001
+    bridge_jwt_secret: str = "change-me-in-production"
+    bridge_jwt_expiry_hours: int = 24
+    bridge_max_sessions: int = 10
+    bridge_enabled: bool = False
 
 
 # Singleton — import this everywhere

@@ -26,9 +26,16 @@ from backend.schemas.ws import (
     WSTurnStart,
 )
 from backend.services.model_router import model_router
+from backend.services.cost_calculator import compute_cost
+from backend.services.cost_tracker import CostTracker
 from backend.tools.registry import tool_registry
+from backend.telemetry.tracing import get_tracer, add_span_attributes, SpanKind
+from backend.telemetry.metrics import Metrics
+from opentelemetry.trace import Status, StatusCode
 
 logger = logging.getLogger("tenderclaw.core.conversation")
+
+tracer = get_tracer("tenderclaw.conversation")
 
 SendFn = Callable[[dict[str, Any]], Awaitable[None]]
 MAX_TURNS = 50
@@ -40,6 +47,33 @@ async def run_conversation_turn(
     send: SendFn,
 ) -> None:
     """Run a full conversation turn (may span multiple API calls for tool use)."""
+    Metrics.increment_request({"session_id": session.session_id})
+
+    with tracer.start_as_current_span(
+        "conversation.turn",
+        kind=SpanKind.INTERNAL,
+        attributes={
+            "session_id": session.session_id,
+            "user_id": getattr(session, "user_id", None),
+            "model": session.model,
+            "working_directory": session.working_directory,
+        },
+    ) as span:
+        try:
+            await _run_conversation_turn_impl(session, user_content, send)
+            span.set_status(Status(StatusCode.OK))
+        except Exception as exc:
+            span.set_status(Status(StatusCode.ERROR, str(exc)))
+            span.record_exception(exc)
+            raise
+
+
+async def _run_conversation_turn_impl(
+    session: SessionData,
+    user_content: str,
+    send: SendFn,
+) -> None:
+    """Internal implementation of conversation turn."""
     await hook_dispatcher.dispatch(
         HookPoint.SESSION_START,
         data={"user_content": user_content},
@@ -68,13 +102,30 @@ async def run_conversation_turn(
     )
 
     intent = await _classify(user_content, session.model)
+    add_span_attributes({"intent": intent})
+
     if intent == "implement" and len(user_content) > 100:
         await _run_team_pipeline(session, user_content, send)
         return
 
-    await _agentic_loop(session, send)
-    session.status = SessionStatus.IDLE
-    session_store.persist(session)
+    try:
+        with tracer.start_as_current_span(
+            "conversation.agentic_loop",
+            kind=SpanKind.INTERNAL,
+            attributes={"model": session.model},
+        ):
+            await _agentic_loop(session, send)
+    except Exception as exc:
+        logger.error("Unhandled error in agentic loop for %s: %s", session.session_id, exc, exc_info=True)
+        Metrics.increment_error("agentic_loop_error", {"session_id": session.session_id})
+        try:
+            await send(WSError(error=str(exc)).model_dump())
+        except Exception:
+            pass
+    finally:
+        session.status = SessionStatus.IDLE
+        session_store.persist(session)
+
     await hook_dispatcher.dispatch(
         HookPoint.SESSION_END,
         data={},
@@ -84,10 +135,53 @@ async def run_conversation_turn(
 
 async def _agentic_loop(session: SessionData, send: SendFn) -> None:
     from backend.core.tool_runner import run_tool_uses
+    from backend.memory.memory_manager import memory_manager
+    from backend.memory.memdir import get_memory_directory
+
+    with tracer.start_as_current_span(
+        "conversation.agentic_loop",
+        kind=SpanKind.INTERNAL,
+        attributes={
+            "session_id": session.session_id,
+            "model": session.model,
+        },
+    ) as loop_span:
+        await _agentic_loop_impl(session, send, loop_span)
+
+
+async def _agentic_loop_impl(session: SessionData, send: SendFn, parent_span) -> None:
+    from backend.core.tool_runner import run_tool_uses
+    from backend.memory.memory_manager import memory_manager
+    from backend.memory.memdir import get_memory_directory
+
+    import time
+    turn_start_time = time.perf_counter()
+
+    # Retrieve relevant past wisdom for this conversation
+    try:
+        wisdom_context = memory_manager.get_relevant_context(
+            _to_api_messages(session.messages), limit=5
+        )
+    except Exception:
+        wisdom_context = ""
+
+    # Retrieve MEMORY.md context
+    try:
+        memdir = get_memory_directory(session.working_directory)
+        memdir.scan_and_index()
+        context_text = " ".join(
+            m.content if isinstance(m.content, str) else ""
+            for m in session.messages[-4:]
+        )
+        memory_context = memdir.format_for_system_prompt(context_text, limit=5)
+    except Exception:
+        memory_context = ""
 
     system = build_system_prompt(
         working_directory=session.working_directory,
         append=session.system_prompt_append,
+        wisdom_context=wisdom_context,
+        memory_context=memory_context,
     )
     tools = tool_registry.list_api_schemas()
 
@@ -113,6 +207,9 @@ async def _agentic_loop(session: SessionData, send: SendFn) -> None:
 
         collector = StreamCollector(message_id=message_id, send=send)
 
+        stream_config = dict(session.model_config)
+        stream_config["session_id"] = session.session_id
+
         try:
             async for event in model_router.stream_message(
                 model=session.model,
@@ -120,7 +217,7 @@ async def _agentic_loop(session: SessionData, send: SendFn) -> None:
                 system=system,
                 tools=tools or None,
                 max_tokens=16384,
-                config=session.model_config,
+                config=stream_config,
             ):
                 if session.should_abort:
                     session.should_abort = False
@@ -150,18 +247,37 @@ async def _agentic_loop(session: SessionData, send: SendFn) -> None:
             message_id=message_id,
         )
         session.messages.append(assistant_msg)
+
+        turn_input = collector.usage.input_tokens
+        turn_output = collector.usage.output_tokens
+        session.total_usage_input += turn_input
+        session.total_usage_output += turn_output
+        turn_cost = compute_cost(session.model, turn_input, turn_output)
+        session.total_cost_usd = getattr(session, "total_cost_usd", 0.0) + turn_cost
+
+        CostTracker.record_usage(
+            session_id=session.session_id,
+            model=session.model,
+            input_tokens=turn_input,
+            output_tokens=turn_output,
+            cost_usd=turn_cost,
+            api_duration_ms=getattr(collector.usage, "api_duration_ms", 0.0),
+        )
+
+        Metrics.record_tokens(turn_input, turn_output, {"model": session.model, "turn": turn_number})
+        Metrics.record_cost(turn_cost, session.model)
+
         await hook_dispatcher.dispatch(
             HookPoint.MESSAGE_ASSISTANT_AFTER,
             data={"message_id": message_id, "content": assistant_msg.content, "stop_reason": collector.stop_reason},
             session_id=session.session_id,
         )
-        session.total_usage_input += collector.usage.input_tokens
-        session.total_usage_output += collector.usage.output_tokens
 
         await send(WSMessageEnd(message_id=message_id).model_dump())
         await send(WSCostUpdate(
             input_tokens=session.total_usage_input,
             output_tokens=session.total_usage_output,
+            total_cost_usd=session.total_cost_usd,
         ).model_dump())
 
         await hook_dispatcher.dispatch(
@@ -188,6 +304,7 @@ async def _agentic_loop(session: SessionData, send: SendFn) -> None:
                 " ".join(m.content if isinstance(m.content, str) else "" for m in session.messages[:2]),
                 "agentic_loop",
             )
+            _log_memory_activity(session, turn_number)
         return
 
     logger.warning("MAX_TURNS (%d) reached for session %s", MAX_TURNS, session.session_id)
@@ -207,27 +324,36 @@ async def _run_team_pipeline(session: SessionData, task: str, send: SendFn) -> N
         session_id=session.session_id,
     )
 
-    async for part in team_pipeline.run_implement_pipeline(task, history, send, session=session):
-        if part.get("type") == "assistant_text":
-            text_parts.append(part.get("delta", ""))
-        await send(part)
+    try:
+        async for part in team_pipeline.run_implement_pipeline(task, history, send, session=session):
+            if part.get("type") == "assistant_text":
+                text_parts.append(part.get("delta", ""))
+            await send(part)
 
-    await hook_dispatcher.dispatch(
-        HookPoint.AGENT_DELEGATE_AFTER,
-        data={"task": task, "agent": "team"},
-        session_id=session.session_id,
-    )
+        await hook_dispatcher.dispatch(
+            HookPoint.AGENT_DELEGATE_AFTER,
+            data={"task": task, "agent": "team"},
+            session_id=session.session_id,
+        )
 
-    if text_parts:
-        session.messages.append(Message(
-            role=Role.ASSISTANT,
-            content="".join(text_parts),
-            message_id=f"msg_{uuid.uuid4().hex[:8]}",
-        ))
+        if text_parts:
+            session.messages.append(Message(
+                role=Role.ASSISTANT,
+                content="".join(text_parts),
+                message_id=f"msg_{uuid.uuid4().hex[:8]}",
+            ))
 
-    _record_wisdom(task, "pipeline")
-    session.status = SessionStatus.IDLE
-    session_store.persist(session)
+        _record_wisdom(task, "pipeline")
+    except Exception as exc:
+        logger.error("Team pipeline error for %s: %s", session.session_id, exc, exc_info=True)
+        try:
+            await send(WSError(error=str(exc)).model_dump())
+        except Exception:
+            pass
+    finally:
+        session.status = SessionStatus.IDLE
+        session_store.persist(session)
+
     await hook_dispatcher.dispatch(
         HookPoint.SESSION_END,
         data={},
@@ -240,6 +366,7 @@ async def _validate_api_key(session: SessionData, send: SendFn) -> bool:
     from backend.services.model_router import detect_provider
 
     provider = detect_provider(session.model)
+    
     if provider == "ollama":
         session.model_config.setdefault("ollama_url", get_session_ollama_url(session.session_id))
         return True
@@ -247,14 +374,23 @@ async def _validate_api_key(session: SessionData, send: SendFn) -> bool:
         session.model_config.setdefault("lmstudio_url", get_session_lmstudio_url(session.session_id))
         return True
 
-    key = get_session_api_key(provider, session.session_id)
-    if not key:
-        await send(WSError(
-            error=f"No API key for '{provider}'. Go to Settings and add your key.",
-            code="api_key_missing",
-        ).model_dump())
-        return False
-    return True
+    # deepseek routes through openrouter
+    lookup_provider = "openrouter" if provider == "deepseek" else provider
+
+    from backend.api.config import _PROVIDER_KEY_MAP
+    key_field = _PROVIDER_KEY_MAP.get(lookup_provider)
+    key = get_session_api_key(lookup_provider, session.session_id)
+    if key:
+        if key_field:
+            session.model_config[key_field] = key
+        session.model_config["session_id"] = session.session_id
+        return True
+
+    await send(WSError(
+        error=f"No API key for '{provider}'. Go to Settings and add your key.",
+        code="api_key_missing",
+    ).model_dump())
+    return False
 
 
 async def _classify(prompt: str, model: str = "") -> str:
@@ -277,6 +413,16 @@ def _record_wisdom(task: str, task_type: str) -> None:
         ))
     except Exception as exc:
         logger.warning("Failed to record wisdom: %s", exc)
+
+
+def _log_memory_activity(session: SessionData, turn: int) -> None:
+    """Log conversation activity to memory."""
+    try:
+        from backend.memory.memdir import get_memory_directory
+        memdir = get_memory_directory(session.working_directory)
+        memdir.log_activity(f"Turn {turn}: {len(session.messages)} messages")
+    except Exception as exc:
+        logger.debug("Failed to log memory activity: %s", exc)
 
 
 def _to_api_messages(messages: list[Message]) -> list[dict[str, Any]]:

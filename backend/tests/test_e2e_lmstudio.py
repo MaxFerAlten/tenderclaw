@@ -4,6 +4,9 @@ Tests:
 1. Backend diagnostics: LM Studio reachable, google/gemma-4-e4b listed
 2. Backend WS: create session with google/gemma-4-e4b, send message, get response
 3. UI (Playwright): select LM Studio in Settings, pick model, save, send message
+
+All three tests are automatically skipped when the required services are not
+running, so they never produce a FAIL in a bare development checkout.
 """
 
 from __future__ import annotations
@@ -28,7 +31,22 @@ TARGET_MODEL = "google/gemma-4-e4b"
 # Helpers
 # ---------------------------------------------------------------------------
 
+async def _check_reachable(url: str, timeout: int = 3) -> bool:
+    """Return True if the URL responds with any HTTP status within timeout."""
+    try:
+        async with httpx.AsyncClient() as client:
+            await client.get(url, timeout=timeout)
+        return True
+    except Exception:
+        return False
+
+
 async def _wait_for_backend(timeout: int = 10) -> None:
+    """Wait up to *timeout* seconds for the backend health endpoint.
+
+    Raises pytest.skip (not RuntimeError) so the test is marked SKIPPED
+    rather than FAILED when the backend is not running.
+    """
     async with httpx.AsyncClient() as client:
         deadline = time.time() + timeout
         while time.time() < deadline:
@@ -39,7 +57,36 @@ async def _wait_for_backend(timeout: int = 10) -> None:
             except Exception:
                 pass
             await asyncio.sleep(0.5)
-    raise RuntimeError("Backend not reachable at " + BACKEND)
+    pytest.skip(f"Backend not running at {BACKEND} — start with `tenderclaw` to run e2e tests")
+
+
+async def _require_frontend() -> None:
+    """Skip the test if the Vite dev server (or built frontend) is not reachable."""
+    reachable = await _check_reachable(FRONTEND, timeout=3)
+    if not reachable:
+        pytest.skip(
+            f"Frontend not running at {FRONTEND} — "
+            "start with `npm run dev` (or serve the dist build) to run UI e2e tests"
+        )
+
+
+async def _require_lmstudio() -> None:
+    """Skip the test if LM Studio is not reachable or the target model is not loaded."""
+    try:
+        async with httpx.AsyncClient() as client:
+            r = await client.get(f"{BACKEND}/api/diagnostics/lmstudio", timeout=5)
+        if r.status_code != 200:
+            pytest.skip("LM Studio diagnostics endpoint not available")
+        data = r.json()
+        if data.get("status") != "ok":
+            pytest.skip(f"LM Studio not reachable: {data}")
+        if TARGET_MODEL not in str(data.get("models", "")):
+            pytest.skip(
+                f"LM Studio is up but {TARGET_MODEL!r} is not loaded — "
+                f"loaded models: {data.get('models', '')}"
+            )
+    except Exception as exc:
+        pytest.skip(f"LM Studio check failed: {exc}")
 
 
 async def _create_session(model: str) -> str:
@@ -54,6 +101,7 @@ async def _create_session(model: str) -> str:
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
+@pytest.mark.e2e
 async def test_lmstudio_diagnostics() -> None:
     """LM Studio is reachable and google/gemma-4-e4b is loaded."""
     await _wait_for_backend()
@@ -74,9 +122,11 @@ async def test_lmstudio_diagnostics() -> None:
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
+@pytest.mark.e2e
 async def test_lmstudio_ws_roundtrip() -> None:
     """Create session with google/gemma-4-e4b, send message via WS, get non-empty response."""
     await _wait_for_backend()
+    await _require_lmstudio()
     session_id = await _create_session(TARGET_MODEL)
 
     collected_text: list[str] = []
@@ -127,9 +177,12 @@ async def test_lmstudio_ws_roundtrip() -> None:
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
+@pytest.mark.e2e
 async def test_settings_ui_lmstudio(tmp_path: Path) -> None:
     """UI: select LM Studio, load models dynamically, pick google/gemma-4-e4b, save, chat."""
     await _wait_for_backend()
+    await _require_lmstudio()
+    await _require_frontend()
 
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(headless=False, slow_mo=250)

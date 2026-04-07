@@ -37,10 +37,19 @@ from backend.core.skills import build_skills_instruction
 def build_system_prompt(
     working_directory: str = ".",
     append: str = "",
+    wisdom_context: str = "",
+    memory_context: str = "",
 ) -> str:
     """Build the full system prompt for a session.
 
-    Composes: base prompt + dynamic context + superpowers skills + user append.
+    Composes: base prompt + skills + contextual wisdom + memory context + dynamic context + user append.
+
+    Args:
+        working_directory: The active working directory shown to the model.
+        append: Optional extra instructions appended at the end.
+        wisdom_context: Pre-built wisdom block from memory_manager (replaces the
+            old static wisdom lookup done here — avoids duplicate retrieval).
+        memory_context: Pre-built MEMORY.md context from memdir.
     """
     parts = [BASE_SYSTEM_PROMPT]
 
@@ -49,18 +58,26 @@ def build_system_prompt(
     if skills:
         parts.append(skills)
 
-    # Wisdom injection — relevant past learnings
-    try:
-        from backend.memory.wisdom import wisdom_store
-        relevant = wisdom_store.find_relevant(working_directory.split("/")[-1])
-        if relevant:
-            wisdom_text = "\n".join(
-                f"- [{w.task_type}] {w.description}: {w.solution_pattern}"
-                for w in relevant[:5]
-            )
-            parts.append(f"\n## Accumulated Wisdom\n{wisdom_text}")
-    except Exception:
-        pass
+    # Contextual wisdom — injected by conversation.py via memory_manager
+    if wisdom_context:
+        parts.append(f"\n{wisdom_context}")
+    else:
+        # Fallback: static wisdom lookup when memory_manager is unavailable
+        try:
+            from backend.memory.wisdom import wisdom_store
+            relevant = wisdom_store.find_relevant(working_directory.split("/")[-1])
+            if relevant:
+                wisdom_text = "\n".join(
+                    f"- [{w.task_type}] {w.description}: {w.solution_pattern}"
+                    for w in relevant[:3]
+                )
+                parts.append(f"\n## Accumulated Wisdom\n{wisdom_text}")
+        except Exception:
+            pass
+
+    # MEMORY.md context — injected by conversation.py via memdir
+    if memory_context:
+        parts.append(f"\n{memory_context}")
 
     # Dynamic section — not cacheable
     parts.append(f"\n## Context\n- Current date: {datetime.utcnow().strftime('%Y-%m-%d')}")

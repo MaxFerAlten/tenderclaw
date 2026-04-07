@@ -40,12 +40,15 @@ async def classify_intent(prompt: str, session_model: str = "") -> Intent:
     Uses the cheapest available provider. Skips if no cloud key is configured.
     """
     from backend.config import settings
+    from backend.api.config import _global_config
 
-    # Pick classifier model based on available keys
-    if settings.anthropic_api_key:
+    # Pick classifier model based on available keys (check global config first)
+    if settings.anthropic_api_key or _global_config.get("anthropic_api_key"):
         classifier_model = "claude-haiku-4-20250514"
-    elif settings.openai_api_key:
+    elif settings.openai_api_key or _global_config.get("openai_api_key"):
         classifier_model = "gpt-4o-mini"
+    elif settings.openrouter_api_key or _global_config.get("openrouter_api_key"):
+        classifier_model = "openai/gpt-4o-mini"
     else:
         # Local-only setup — skip classification entirely
         return Intent.IMPLEMENT
