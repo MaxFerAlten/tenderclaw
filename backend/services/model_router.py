@@ -95,9 +95,9 @@ def detect_provider(model: str) -> str:
                             model_ids = []
                         if any(model_lower in mId for mId in model_ids):
                             return "lmstudio"
-            except Exception:
-                pass
-        
+            except Exception as exc:
+                logger.debug("LM Studio model check failed for %s: %s", endpoint, exc)
+
         return "lmstudio"
     
     # No slash - check LM Studio FIRST if available
@@ -124,8 +124,8 @@ def detect_provider(model: str) -> str:
                     
                     lmstudio_models.extend(models)
                     lmstudio_available = True
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("LM Studio availability check failed for %s: %s", endpoint, exc)
     
     if lmstudio_available and lmstudio_models:
         # Check PROVIDER_MAP first — explicit mappings take priority over LM Studio

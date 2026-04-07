@@ -90,11 +90,13 @@ async def _run_conversation_turn_impl(
         session.status = SessionStatus.IDLE
         return
 
-    session.messages.append(Message(
-        role=Role.USER,
-        content=user_content,
-        message_id=f"msg_{uuid.uuid4().hex[:8]}",
-    ))
+    session.messages.append(
+        Message(
+            role=Role.USER,
+            content=user_content,
+            message_id=f"msg_{uuid.uuid4().hex[:8]}",
+        )
+    )
     await hook_dispatcher.dispatch(
         HookPoint.MESSAGE_USER_BEFORE,
         data={"content": user_content},
@@ -121,7 +123,7 @@ async def _run_conversation_turn_impl(
         try:
             await send(WSError(error=str(exc)).model_dump())
         except Exception:
-            pass
+            logger.debug("Failed to send error to client (connection likely closed)")
     finally:
         session.status = SessionStatus.IDLE
         session_store.persist(session)
@@ -155,13 +157,12 @@ async def _agentic_loop_impl(session: SessionData, send: SendFn, parent_span) ->
     from backend.memory.memdir import get_memory_directory
 
     import time
+
     turn_start_time = time.perf_counter()
 
     # Retrieve relevant past wisdom for this conversation
     try:
-        wisdom_context = memory_manager.get_relevant_context(
-            _to_api_messages(session.messages), limit=5
-        )
+        wisdom_context = memory_manager.get_relevant_context(_to_api_messages(session.messages), limit=5)
     except Exception:
         wisdom_context = ""
 
@@ -169,10 +170,7 @@ async def _agentic_loop_impl(session: SessionData, send: SendFn, parent_span) ->
     try:
         memdir = get_memory_directory(session.working_directory)
         memdir.scan_and_index()
-        context_text = " ".join(
-            m.content if isinstance(m.content, str) else ""
-            for m in session.messages[-4:]
-        )
+        context_text = " ".join(m.content if isinstance(m.content, str) else "" for m in session.messages[-4:])
         memory_context = memdir.format_for_system_prompt(context_text, limit=5)
     except Exception:
         memory_context = ""
@@ -274,11 +272,6 @@ async def _agentic_loop_impl(session: SessionData, send: SendFn, parent_span) ->
         )
 
         await send(WSMessageEnd(message_id=message_id).model_dump())
-        await send(WSCostUpdate(
-            input_tokens=session.total_usage_input,
-            output_tokens=session.total_usage_output,
-            total_cost_usd=session.total_cost_usd,
-        ).model_dump())
 
         await hook_dispatcher.dispatch(
             HookPoint.TURN_END,
@@ -287,14 +280,14 @@ async def _agentic_loop_impl(session: SessionData, send: SendFn, parent_span) ->
         )
 
         if collector.tool_uses and collector.stop_reason == "tool_use":
-            result_blocks = await run_tool_uses(
-                collector.tool_uses, session, message_id, send
+            result_blocks = await run_tool_uses(collector.tool_uses, session, message_id, send)
+            session.messages.append(
+                Message(
+                    role=Role.USER,
+                    content=result_blocks,
+                    message_id=f"msg_{uuid.uuid4().hex[:8]}",
+                )
             )
-            session.messages.append(Message(
-                role=Role.USER,
-                content=result_blocks,
-                message_id=f"msg_{uuid.uuid4().hex[:8]}",
-            ))
             continue  # Feed results back to model
 
         # Turn complete
@@ -337,11 +330,13 @@ async def _run_team_pipeline(session: SessionData, task: str, send: SendFn) -> N
         )
 
         if text_parts:
-            session.messages.append(Message(
-                role=Role.ASSISTANT,
-                content="".join(text_parts),
-                message_id=f"msg_{uuid.uuid4().hex[:8]}",
-            ))
+            session.messages.append(
+                Message(
+                    role=Role.ASSISTANT,
+                    content="".join(text_parts),
+                    message_id=f"msg_{uuid.uuid4().hex[:8]}",
+                )
+            )
 
         _record_wisdom(task, "pipeline")
     except Exception as exc:
@@ -349,7 +344,7 @@ async def _run_team_pipeline(session: SessionData, task: str, send: SendFn) -> N
         try:
             await send(WSError(error=str(exc)).model_dump())
         except Exception:
-            pass
+            logger.debug("Failed to send pipeline error to client (connection likely closed)")
     finally:
         session.status = SessionStatus.IDLE
         session_store.persist(session)
@@ -366,7 +361,7 @@ async def _validate_api_key(session: SessionData, send: SendFn) -> bool:
     from backend.services.model_router import detect_provider
 
     provider = detect_provider(session.model)
-    
+
     if provider == "ollama":
         session.model_config.setdefault("ollama_url", get_session_ollama_url(session.session_id))
         return True
@@ -378,6 +373,7 @@ async def _validate_api_key(session: SessionData, send: SendFn) -> bool:
     lookup_provider = "openrouter" if provider == "deepseek" else provider
 
     from backend.api.config import _PROVIDER_KEY_MAP
+
     key_field = _PROVIDER_KEY_MAP.get(lookup_provider)
     key = get_session_api_key(lookup_provider, session.session_id)
     if key:
@@ -386,16 +382,19 @@ async def _validate_api_key(session: SessionData, send: SendFn) -> bool:
         session.model_config["session_id"] = session.session_id
         return True
 
-    await send(WSError(
-        error=f"No API key for '{provider}'. Go to Settings and add your key.",
-        code="api_key_missing",
-    ).model_dump())
+    await send(
+        WSError(
+            error=f"No API key for '{provider}'. Go to Settings and add your key.",
+            code="api_key_missing",
+        ).model_dump()
+    )
     return False
 
 
 async def _classify(prompt: str, model: str = "") -> str:
     try:
         from backend.orchestration.intent_gate import classify_intent
+
         intent = await classify_intent(prompt, session_model=model)
         return intent.value
     except Exception:
@@ -405,12 +404,15 @@ async def _classify(prompt: str, model: str = "") -> str:
 def _record_wisdom(task: str, task_type: str) -> None:
     try:
         from backend.memory.wisdom import WisdomItem, wisdom_store
-        wisdom_store.add(WisdomItem(
-            id=f"w_{uuid.uuid4().hex[:8]}",
-            task_type=task_type,
-            description=task[:200],
-            solution_pattern=f"Completed via {task_type}",
-        ))
+
+        wisdom_store.add(
+            WisdomItem(
+                id=f"w_{uuid.uuid4().hex[:8]}",
+                task_type=task_type,
+                description=task[:200],
+                solution_pattern=f"Completed via {task_type}",
+            )
+        )
     except Exception as exc:
         logger.warning("Failed to record wisdom: %s", exc)
 
@@ -419,6 +421,7 @@ def _log_memory_activity(session: SessionData, turn: int) -> None:
     """Log conversation activity to memory."""
     try:
         from backend.memory.memdir import get_memory_directory
+
         memdir = get_memory_directory(session.working_directory)
         memdir.log_activity(f"Turn {turn}: {len(session.messages)} messages")
     except Exception as exc:
@@ -440,7 +443,13 @@ def _to_api_messages(messages: list[Message]) -> list[dict[str, Any]]:
                 elif isinstance(b, ToolUseBlock):
                     blocks.append({"type": "tool_use", "id": b.id, "name": b.name, "input": b.input})
                 elif isinstance(b, ToolResultBlock):
-                    blocks.append({"type": "tool_result", "tool_use_id": b.tool_use_id,
-                                   "content": b.content, "is_error": b.is_error})
+                    blocks.append(
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": b.tool_use_id,
+                            "content": b.content,
+                            "is_error": b.is_error,
+                        }
+                    )
             api.append({"role": msg.role.value, "content": blocks})
     return api

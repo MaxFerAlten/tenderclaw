@@ -5,8 +5,10 @@ Mirrors Claude Code's modular prompt architecture with cacheable + dynamic secti
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 
+logger = logging.getLogger("tenderclaw.core.system_prompt")
 
 BASE_SYSTEM_PROMPT = """\
 You are TenderClaw, an advanced AI coding assistant powered by multiple AI models.
@@ -72,8 +74,8 @@ def build_system_prompt(
                     for w in relevant[:3]
                 )
                 parts.append(f"\n## Accumulated Wisdom\n{wisdom_text}")
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Wisdom injection skipped: %s", exc)
 
     # MEMORY.md context — injected by conversation.py via memdir
     if memory_context:

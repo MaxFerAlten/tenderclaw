@@ -59,6 +59,19 @@ async def websocket_endpoint(ws: WebSocket, session_id: str) -> None:
                 attachments = raw.get("attachments", [])
                 image_attachments = [a for a in attachments if a.get("type", "").startswith("image/")]
                 if image_attachments:
+                    # Check if model supports vision BEFORE sending to OpenCode
+                    from backend.services.model_router import detect_provider
+
+                    provider = detect_provider(session.model)
+                    if provider == "opencode" and "big-pickle" in session.model.lower():
+                        await send(
+                            {
+                                "type": "error",
+                                "error": "Big Pickle non supporta immagini. Seleziona un modello vision come 'opencode/claude-sonnet-4-6' o 'opencode/gpt-5.4'.",
+                                "code": "model_no_vision",
+                            }
+                        )
+                        return
                     await _handle_image_message(session, msg.content, image_attachments, send)
                     continue
 
@@ -102,11 +115,11 @@ async def websocket_endpoint(ws: WebSocket, session_id: str) -> None:
         try:
             await ws.send_json(WSError(error=str(exc)).model_dump())
         except Exception:
-            pass
+            logger.debug("Failed to send WS error (connection likely closed)")
         try:
             await ws.close(code=1011, reason="internal_error")
         except Exception:
-            pass
+            logger.debug("Failed to close WS gracefully (already closed)")
 
 
 async def _handle_image_message(
@@ -116,9 +129,22 @@ async def _handle_image_message(
     send: Any,
 ) -> None:
     """Route image messages to the Looker agent."""
+    from backend.services.model_router import detect_provider
+
+    provider = detect_provider(session.model)
+
+    if provider == "opencode" and "big-pickle" in session.model.lower():
+        await send(
+            {
+                "type": "error",
+                "error": "Big Pickle non supporta immagini. Seleziona un modello vision come 'opencode/claude-sonnet-4-6' o 'opencode/gpt-5.4' nelle impostazioni.",
+                "code": "model_no_vision",
+            }
+        )
+        return
+
     from backend.core.conversation import run_conversation_turn
 
-    # Build a content string that includes image references for the Looker agent
     image_refs = "\n".join(
         f"[Image: {a.get('name', 'attachment')} ({a.get('type', 'image')})]"
         + (f" URL: {a['url']}" if a.get("url") else "")
@@ -126,7 +152,6 @@ async def _handle_image_message(
     )
     combined = f"{text}\n\n{image_refs}".strip() if text else image_refs
 
-    # Temporarily switch to looker agent for this turn
     original_model = session.model
     session.model_config["agent_override"] = "looker"
     try:
