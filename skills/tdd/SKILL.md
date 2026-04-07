@@ -1,20 +1,27 @@
-# /tdd — Test-Driven Development Skill
+---
+name: tdd
+description: Test-driven development workflow
+trigger: tdd
+---
 
-## Trigger
-`/tdd <feature description>`
+# TDD — Test-Driven Development
 
-## Agents
-- **sisyphus** (primary): Write tests then implementation
-- **momus** (verify): Ensure tests are meaningful
-
-## Flow
-1. Write failing tests first based on the feature description.
-2. Run tests to confirm they fail.
-3. Implement the minimum code to make tests pass.
-4. Run tests to confirm they pass.
-5. Refactor if needed (tests must still pass).
+## Cycle
+1. **Red**: Write a failing test
+2. **Green**: Write minimal code to pass
+3. **Refactor**: Improve code keeping tests green
 
 ## Rules
-- Tests must be written BEFORE implementation code.
-- Each test must fail before the corresponding code is written.
-- No skipping the red-green-refactor cycle.
+- Always write tests first
+- Run tests after every change
+- Keep tests fast (<100ms each)
+- One assertion per test
+
+## Workflow
+1. Write failing test
+2. Run test → Red
+3. Write minimal code → Green
+4. Refactor
+5. Repeat
+
+Task: {{ARGUMENTS}}

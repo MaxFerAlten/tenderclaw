@@ -1,29 +1,34 @@
-# /plan — Structured Planning Skill
+---
+name: plan
+description: Strategic planning with requirements gathering
+trigger: plan
+---
 
-## Trigger
-`/plan <description>`
+# Plan — Strategic Planning
 
-## Agents
-- **metis** (primary): Creates detailed implementation plan
-- **oracle** (support): Research unknowns
+## Modes
+- **Interview**: Broad requests → interactive requirements gathering
+- **Direct**: Detailed requests → generate plan directly
+- **Consensus**: Planner → Architect → Critic loop
 
-## Flow
-1. Clarify the goal with the user (1-2 questions max).
-2. Research existing code structure relevant to the task.
-3. Produce a step-by-step plan with file paths, changes, and dependencies.
-4. Highlight risks and open questions.
+## Interview Mode
+1. Classify request (broad = interview mode)
+2. Ask one focused question
+3. Build on answers
+4. Create plan when ready
 
-## Output Format
-```
-## Plan: <title>
+## Direct Mode
+1. Quick analysis
+2. Create comprehensive work plan
+3. Optional review
 
-### Steps
-1. [file_path] — description of change
-2. [file_path] — description of change
+## Plan Output Format
+- Requirements Summary
+- Acceptance Criteria (testable)
+- Implementation Steps
+- Risks and Mitigations
+- Verification Steps
 
-### Risks
-- Risk description → mitigation
+Plans saved to `.tenderclaw/plans/`
 
-### Open Questions
-- Question for the user
-```
+Task: {{ARGUMENTS}}

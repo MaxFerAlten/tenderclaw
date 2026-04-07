@@ -30,6 +30,15 @@ dependencies = [
     "python-dotenv>=1.0",
     "tiktoken>=0.8.0",
     "rich>=13.0",
+
+    # OpenTelemetry
+    "opentelemetry-api>=1.25.0",
+    "opentelemetry-sdk>=1.25.0",
+    "opentelemetry-instrumentation-fastapi>=0.46b0",
+    "opentelemetry-exporter-otlp>=1.25.0",
+
+    # JWT
+    "PyJWT>=2.8.0",
 ]
 
 [project.optional-dependencies]
@@ -64,6 +73,9 @@ known-first-party = ["backend"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["backend"]
+markers = [
+    "e2e: end-to-end tests that require a running backend and/or frontend (skip with -m 'not e2e')",
+]
 
 [tool.mypy]
 python_version = "3.11"
