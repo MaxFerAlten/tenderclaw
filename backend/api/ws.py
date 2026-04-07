@@ -26,17 +26,46 @@ from backend.utils.errors import SessionNotFoundError
 logger = logging.getLogger("tenderclaw.api.ws")
 router = APIRouter()
 
+class WSConnectionManager:
+    """Manages active WebSocket connections to allow cross-request event pushing."""
+    def __init__(self):
+        self.active_connections: dict[str, set[WebSocket]] = {}
+
+    def connect(self, ws: WebSocket, session_id: str):
+        if session_id not in self.active_connections:
+            self.active_connections[session_id] = set()
+        self.active_connections[session_id].add(ws)
+
+    def disconnect(self, ws: WebSocket, session_id: str):
+        if session_id in self.active_connections:
+            self.active_connections[session_id].remove(ws)
+            if not self.active_connections[session_id]:
+                del self.active_connections[session_id]
+
+    async def send_to_session(self, session_id: str, message: dict[str, Any]):
+        """Push a message to all active clients of a session."""
+        if session_id in self.active_connections:
+            for ws in self.active_connections[session_id]:
+                try:
+                    await ws.send_json(message)
+                except Exception as e:
+                    logger.warning("Failed to send message to %s: %s", session_id, e)
+
+ws_manager = WSConnectionManager()
+
 
 @router.websocket("/ws/{session_id}")
 async def websocket_endpoint(ws: WebSocket, session_id: str) -> None:
     """Main WebSocket handler for a session."""
     await ws.accept()
+    ws_manager.connect(ws, session_id)
 
     try:
         session = session_store.get(session_id)
     except SessionNotFoundError:
         await ws.send_json(WSError(error=f"Session not found: {session_id}", code="session_not_found").model_dump())
         await ws.close(code=4004, reason="session_not_found")
+        ws_manager.disconnect(ws, session_id)
         return
 
     logger.info("WS connected: %s", session_id)
@@ -110,8 +139,10 @@ async def websocket_endpoint(ws: WebSocket, session_id: str) -> None:
                 await send(WSError(error=f"Unknown message type: {msg_type}", code="unknown_type").model_dump())
     except WebSocketDisconnect:
         logger.info("WS disconnected: %s", session_id)
+        ws_manager.disconnect(ws, session_id)
     except Exception as exc:
         logger.error("WS error for %s: %s", session_id, exc, exc_info=True)
+        ws_manager.disconnect(ws, session_id)
         try:
             await ws.send_json(WSError(error=str(exc)).model_dump())
         except Exception:

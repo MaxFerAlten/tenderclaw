@@ -28,6 +28,7 @@ from backend.api.keywords_api import router as keywords_router
 from backend.api.modes_api import router as modes_router
 from backend.api.oauth_api import router as oauth_router
 from backend.api.notifications_api import router as notifications_router
+from backend.api.relay import router as relay_router
 
 api_router = APIRouter()
 
@@ -55,3 +56,4 @@ api_router.include_router(keywords_router, tags=["keywords"])
 api_router.include_router(modes_router, tags=["mode"])
 api_router.include_router(oauth_router, tags=["oauth"])
 api_router.include_router(notifications_router, tags=["notifications"])
+api_router.include_router(relay_router, prefix="/relay", tags=["relay"])
