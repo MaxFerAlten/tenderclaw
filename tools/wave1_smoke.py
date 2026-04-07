@@ -8,7 +8,8 @@ so it can be used as a quick verifiability smoke-test in CI or manual runs.
 from __future__ import annotations
 
 import sys
-sys.path.append('D:/MY_AI/claude-code/TenderClaw')
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from backend.schemas.sessions import SessionCreate
 from backend.services.session_store import session_store

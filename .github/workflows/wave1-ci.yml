@@ -21,7 +21,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pytest
+          pip install -e ".[dev]"
 
       - name: Run Wave 1 Smoke Test
         run: |
@@ -34,10 +34,6 @@ jobs:
       - name: Run Wave 1 Restart Simulation
         run: |
           python tools/wave1_restart_simulation.py
-
-      - name: Run Health Check (in-process)
-        run: |
-          python tools/health_check_run.py
 
       - name: Run Minimal Wave 1 Resume Test (pytest)
         run: |

@@ -7,7 +7,7 @@ import os
 import sys
 from pathlib import Path
 
-sys.path.append('D:/MY_AI/claude-code/TenderClaw')
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from backend.services.session_store import STATE_DIR, SessionData
 
