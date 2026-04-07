@@ -173,6 +173,15 @@ class WSAgentSwitch(BaseModel):
     agent_name: str
     task: str | None = None
 
+class WSPipelineStage(BaseModel):
+    """Pipeline stage transition (for HUD tracking)."""
+
+    type: Literal["pipeline_stage"] = "pipeline_stage"
+    stage: str  # e.g., "oracle", "metis", "sisyphus", "momus", "fixer", "sentinel"
+    status: str  # "started", "completed", "failed", "skipped"
+    detail: str = ""
+
+
 class WSUIUpdate(BaseModel):
     """Agent updates the UI canvas (A2UI)."""
 
@@ -197,5 +206,6 @@ WSServerMessage = (
     | WSTurnEnd
     | WSCostUpdate
     | WSAgentSwitch
+    | WSPipelineStage
     | WSUIUpdate
 )

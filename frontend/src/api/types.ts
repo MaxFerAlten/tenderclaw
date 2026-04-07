@@ -129,6 +129,13 @@ export interface WSAgentSwitch {
   task?: string;
 }
 
+export interface WSPipelineStage {
+  type: "pipeline_stage";
+  stage: string;
+  status: string;
+  detail: string;
+}
+
 export interface WSUIUpdate {
   type: "ui_update";
   artifact_id: string;
@@ -151,6 +158,7 @@ export type WSServerEvent =
   | WSError
   | WSCostUpdate
   | WSAgentSwitch
+  | WSPipelineStage
   | WSUIUpdate;
 
 // === Tools ===

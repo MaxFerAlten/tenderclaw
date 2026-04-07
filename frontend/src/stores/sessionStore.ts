@@ -21,6 +21,15 @@ interface ToolState {
   result?: string;
 }
 
+export interface PipelineStageState {
+  stage: string;
+  status: "pending" | "started" | "completed" | "failed" | "skipped";
+  detail: string;
+  startedAt?: number;
+  completedAt?: number;
+}
+
+
 export interface PermissionRequest {
   tool_use_id: string;
   tool_name: string;
@@ -53,6 +62,12 @@ interface SessionStore {
   inputTokens: number;
   outputTokens: number;
   perMessageCosts: Array<{ messageId: string; inputTokens: number; outputTokens: number; costUsd: number }>;
+
+  // Pipeline
+  pipelineActive: boolean;
+  pipelineStages: PipelineStageState[];
+  turnCount: number;
+  turnStartedAt: number | null;
 
   // Artifacts (A2UI)
   artifacts: Map<string, Artifact>;
@@ -89,6 +104,10 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   inputTokens: 0,
   outputTokens: 0,
   perMessageCosts: [],
+  pipelineActive: false,
+  pipelineStages: [],
+  turnCount: 0,
+  turnStartedAt: null,
   artifacts: new Map(),
   activeArtifactId: null,
   detectedKeyword: null,
@@ -134,6 +153,10 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
       permissionQueue: [],
       totalCostUsd: 0,
       perMessageCosts: [],
+      pipelineActive: false,
+      pipelineStages: [],
+      turnCount: 0,
+      turnStartedAt: null,
       detectedKeyword: null,
     }),
 
@@ -224,12 +247,36 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
         break;
 
       case "turn_start":
-        set({ status: "busy", activeAgent: event.agent_name || "sisyphus" });
+        set((s) => ({
+          status: "busy",
+          activeAgent: event.agent_name || "sisyphus",
+          turnCount: s.turnCount + 1,
+          turnStartedAt: Date.now(),
+        }));
         break;
 
       case "turn_end":
         set({ status: "idle", activeAgent: "sisyphus" });
         break;
+
+      case "pipeline_stage": {
+        const stages = [...state.pipelineStages];
+        const existing = stages.findIndex((s) => s.stage === event.stage);
+        const entry: PipelineStageState = {
+          stage: event.stage,
+          status: event.status as PipelineStageState["status"],
+          detail: event.detail || "",
+          startedAt: event.status === "started" ? Date.now() : stages[existing]?.startedAt,
+          completedAt: event.status === "completed" || event.status === "failed" ? Date.now() : undefined,
+        };
+        if (existing >= 0) {
+          stages[existing] = entry;
+        } else {
+          stages.push(entry);
+        }
+        set({ pipelineActive: true, pipelineStages: stages });
+        break;
+      }
 
       case "agent_switch":
         set({ activeAgent: event.agent_name });
