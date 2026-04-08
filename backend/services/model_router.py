@@ -105,8 +105,8 @@ async def detect_provider(model: str) -> str:
         try:
             if await asyncio.to_thread(_check_slash_lmstudio):
                 return "lmstudio"
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("LM Studio slash-prefix check failed: %s", exc)
 
         return "lmstudio"
     
@@ -137,7 +137,8 @@ async def detect_provider(model: str) -> str:
     
     try:
         lmstudio_models = await asyncio.to_thread(_fetch_lmstudio_models)
-    except Exception:
+    except Exception as exc:
+        logger.debug("LM Studio model fetch failed: %s", exc)
         lmstudio_models = []
     
     lmstudio_available = len(lmstudio_models) > 0

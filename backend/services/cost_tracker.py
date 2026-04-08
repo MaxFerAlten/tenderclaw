@@ -1,8 +1,11 @@
 """Cost tracking service layer."""
 
+import logging
 from pathlib import Path
 from backend.runtime.usage_tracker import UsageTracker
 from backend.services.session_store import session_store
+
+logger = logging.getLogger("tenderclaw.services.cost_tracker")
 
 COSTS_DIR = Path(".tenderclaw/costs")
 
@@ -92,8 +95,8 @@ class CostTracker:
             if session_id not in cls._trackers:
                 try:
                     cls._trackers[session_id] = UsageTracker.load_from_disk(f)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug("Failed to load cost data for %s: %s", session_id, exc)
 
 
 cost_tracker = CostTracker

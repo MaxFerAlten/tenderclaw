@@ -248,8 +248,8 @@ async def run_with_model_fallback(
                 if on_error:
                     try:
                         on_error(failover_error)
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        logger.debug("on_error callback failed: %s", exc)
 
                 # Context overflow = never fallback
                 if is_context_overflow_error(failover_error):

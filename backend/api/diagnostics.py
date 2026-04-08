@@ -67,8 +67,8 @@ async def lmstudio_health(base_url: str | None = None) -> Dict[str, str]:
                 try:
                     data = resp.json()
                     models = [m.get("id", "") for m in data.get("data", [])]
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug("Failed to parse LM Studio models response: %s", exc)
             detail = resp.text[:300] if not ok else ""
         return {
             "status": "ok" if ok else "not_ok",

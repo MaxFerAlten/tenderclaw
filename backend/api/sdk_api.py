@@ -217,4 +217,4 @@ async def sdk_stream(ws: WebSocket, session_id: str) -> None:
                 ).model_dump()
             )
         except Exception:
-            pass
+            logger.debug("Failed to send SDK stream error (connection likely closed)")
