@@ -23,7 +23,18 @@ from backend.agents.registry import AgentRegistry
 
 logger = logging.getLogger("tenderclaw.plugins.superpowers")
 
-SUPERPOWERS_PATH = Path(r"d:\MY_AI\claude-code\superpowers")
+def _resolve_superpowers_path() -> Path:
+    """Resolve superpowers path from config, env, or default."""
+    from backend.config import settings
+    if settings.superpowers_path:
+        return Path(settings.superpowers_path)
+    env = os.environ.get("SUPERPOWERS_PATH", "")
+    if env:
+        return Path(env)
+    return Path(__file__).resolve().parent.parent.parent / "superpowers"
+
+
+SUPERPOWERS_PATH = _resolve_superpowers_path()
 
 
 class SuperpowersPlugin(BasePlugin):

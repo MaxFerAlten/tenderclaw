@@ -194,9 +194,27 @@ async def _agentic_loop_impl(session: SessionData, send: SendFn, parent_span) ->
     except Exception:
         memory_context = ""
 
+    # Skill trigger matching — inject matched skill context into the prompt
+    skill_append = ""
+    try:
+        from backend.core.skills import match_trigger
+        matched = match_trigger(user_content)
+        if matched:
+            skill = matched[0]
+            skill_append = (
+                f"\n## Active Skill: {skill.name}\n"
+                f"The user's message matched the '{skill.name}' skill (trigger: {skill.trigger}).\n"
+                f"Follow the instructions in the skill file at: {skill.path}\n"
+            )
+            logger.info("Skill trigger matched: %s for input: %.60s", skill.name, user_content)
+    except Exception as exc:
+        logger.debug("Skill trigger matching skipped: %s", exc)
+
+    combined_append = (session.system_prompt_append or "") + skill_append
+
     system = build_system_prompt(
         working_directory=session.working_directory,
-        append=session.system_prompt_append,
+        append=combined_append,
         wisdom_context=wisdom_context,
         memory_context=memory_context,
     )

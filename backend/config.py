@@ -51,6 +51,9 @@ class Settings(BaseSettings):
     otel_service_name: str = "tenderclaw"
     otel_enabled: bool = True
 
+    # Superpowers
+    superpowers_path: str = ""
+
     # OAuth
     github_client_id: str = Field(default="", alias="GITHUB_CLIENT_ID")
     github_client_secret: str = Field(default="", alias="GITHUB_CLIENT_SECRET")

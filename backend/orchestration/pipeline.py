@@ -14,7 +14,7 @@ from typing import Any, AsyncIterator, Callable, Awaitable
 from backend.agents.handler import agent_handler
 from backend.memory.wisdom import WisdomItem, wisdom_store
 from backend.orchestration.plan_store import PlanStatus, plan_store
-from backend.schemas.ws import WSAgentSwitch, WSError, WSNotification, WSPipelineStage, WSTurnEnd
+from backend.schemas.ws import WSAgentSwitch, WSError, WSNotification, WSPipelineStage, WSThinkingProgress, WSTurnEnd
 from backend.services.notifications import (
     NotificationCategory,
     NotificationLevel,
@@ -29,6 +29,15 @@ MAX_FIX_ATTEMPTS = 3
 
 class TeamPipeline:
 
+    STAGE_PHASES = {
+        "oracle": "analyzing",
+        "metis": "planning",
+        "sisyphus": "reasoning",
+        "momus": "analyzing",
+        "fixer": "reasoning",
+        "sentinel": "analyzing",
+    }
+
     async def _notify_stage(
         self,
         send: SendFn,
@@ -37,9 +46,20 @@ class TeamPipeline:
         detail: str,
         session_id: str = "unknown",
     ) -> None:
-        """Emit pipeline stage + notification for the HUD."""
+        """Emit pipeline stage + thinking progress + notification for the HUD."""
         await send(WSPipelineStage(stage=agent_name, status=status, detail=detail).model_dump())
         await send(WSAgentSwitch(agent_name=agent_name, task=detail).model_dump())
+
+        # Thinking progress for the HUD thinking indicator
+        phase = self.STAGE_PHASES.get(agent_name, "reasoning")
+        if status == "started":
+            await send(WSThinkingProgress(
+                agent_name=agent_name, phase=phase, progress_pct=0, detail=detail,
+            ).model_dump())
+        elif status in ("completed", "failed"):
+            await send(WSThinkingProgress(
+                agent_name=agent_name, phase=phase, progress_pct=100, detail=detail,
+            ).model_dump())
 
         if status == "started":
             notif = notification_service.create(

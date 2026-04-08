@@ -69,6 +69,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     # Initialize plugins
     _init_plugins()
     
+    # Wire notification broadcast
+    _init_notifications()
+
     # Initialize OAuth providers
     _init_oauth()
 
@@ -125,6 +128,30 @@ def _init_channels() -> None:
     if settings.discord_token:
         channels.discord_manager.start()
         logger.info("Discord channel initialized")
+
+
+def _init_notifications() -> None:
+    """Wire notification broadcast to WebSocket manager."""
+    from backend.api.ws import ws_manager
+    from backend.services.notifications import notification_service
+
+    async def broadcast_notification(notif):
+        """Push notification to all connected sessions."""
+        from backend.schemas.ws import WSNotification
+        msg = WSNotification(
+            id=notif.id,
+            level=notif.level.value,
+            category=notif.category.value,
+            title=notif.title,
+            body=notif.body,
+            agent_name=notif.agent_name,
+            auto_dismiss_ms=notif.auto_dismiss_ms,
+        ).model_dump()
+        for sid in ws_manager.active_sessions():
+            await ws_manager.send_to_session(sid, msg)
+
+    notification_service.set_broadcast(broadcast_notification)
+    logger.info("Notification broadcast wired to WebSocket manager")
 
 
 def _init_oauth() -> None:

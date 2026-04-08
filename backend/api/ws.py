@@ -42,6 +42,10 @@ class WSConnectionManager:
             if not self.active_connections[session_id]:
                 del self.active_connections[session_id]
 
+    def active_sessions(self) -> list[str]:
+        """Return list of session IDs with active WebSocket connections."""
+        return list(self.active_connections.keys())
+
     async def send_to_session(self, session_id: str, message: dict[str, Any]):
         """Push a message to all active clients of a session."""
         if session_id in self.active_connections:
