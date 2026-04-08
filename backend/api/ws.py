@@ -91,7 +91,7 @@ async def websocket_endpoint(ws: WebSocket, session_id: str) -> None:
                     # Check if model supports vision BEFORE sending to OpenCode
                     from backend.services.model_router import detect_provider
 
-                    provider = detect_provider(session.model)
+                    provider = await detect_provider(session.model)
                     if provider == "opencode" and "big-pickle" in session.model.lower():
                         await send(
                             {
@@ -162,7 +162,7 @@ async def _handle_image_message(
     """Route image messages to the Looker agent."""
     from backend.services.model_router import detect_provider
 
-    provider = detect_provider(session.model)
+    provider = await detect_provider(session.model)
 
     if provider == "opencode" and "big-pickle" in session.model.lower():
         await send(

@@ -116,7 +116,7 @@ async def _run_conversation_turn_impl(
     # OpenCode / Ollama / other providers run the standard agentic loop —
     # the team pipeline uses Anthropic sub-agents internally.
     from backend.services.model_router import detect_provider
-    _provider = detect_provider(session.model)
+    _provider = await detect_provider(session.model)
     _anthropic_native = _provider == "anthropic"
     if _anthropic_native and intent == "implement" and len(user_content) > 100:
         await _run_team_pipeline(session, user_content, send)
@@ -399,7 +399,7 @@ async def _validate_api_key(session: SessionData, send: SendFn) -> bool:
     from backend.api.config import get_session_api_key, get_session_ollama_url, get_session_lmstudio_url
     from backend.services.model_router import detect_provider
 
-    provider = detect_provider(session.model)
+    provider = await detect_provider(session.model)
 
     if provider == "ollama":
         session.model_config.setdefault("ollama_url", get_session_ollama_url(session.session_id))

@@ -353,10 +353,31 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
             content: `⚠️ ${event.error}`,
             message_id: `err_${Date.now()}`,
           };
-          set((s) => ({
-            status: "idle",
-            messages: [...s.messages, errMsg],
-          }));
+          set((s) => {
+            const blocks: ContentBlock[] = [];
+            if (s.streamingText) blocks.push({ type: "text", text: s.streamingText });
+            blocks.push(...s.pendingBlocks);
+            
+            const msgs = [...s.messages];
+            if (blocks.length > 0) {
+              msgs.push({
+                role: "assistant",
+                content: blocks.length === 1 && blocks[0].type === "text"
+                  ? (blocks[0] as { text: string }).text
+                  : blocks,
+                message_id: s.streamingMessageId || `partial_${Date.now()}`,
+              });
+            }
+            msgs.push(errMsg);
+
+            return {
+              status: "idle",
+              messages: msgs,
+              streamingText: "",
+              streamingMessageId: "",
+              pendingBlocks: [],
+            };
+          });
         }
         console.error("Server error:", event.error);
         break;

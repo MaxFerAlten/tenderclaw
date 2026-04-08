@@ -54,7 +54,9 @@ PROVIDER_MAP: dict[str, str] = {
 }
 
 
-def detect_provider(model: str) -> str:
+import asyncio
+
+async def detect_provider(model: str) -> str:
     """Detect the provider from a model name."""
     model_lower = model.lower()
     
@@ -79,6 +81,41 @@ def detect_provider(model: str) -> str:
         import urllib.request
         from backend.config import settings
         
+        def _check_slash_lmstudio():
+            for endpoint in ["/v1/models", "/api/v1/models"]:
+                url = settings.lmstudio_base_url.rstrip("/") + endpoint
+                try:
+                    req = urllib.request.Request(url)
+                    with urllib.request.urlopen(req, timeout=3) as resp:
+                        if resp.status == 200:
+                            import json
+                            data = json.loads(resp.read().decode())
+                            if "data" in data:
+                                mIds = [m.get("id", "").lower() for m in data.get("data", [])]
+                            elif "models" in data:
+                                mIds = [m.get("id", "").lower() for m in data.get("models", [])]
+                            else:
+                                mIds = []
+                            if any(model_lower in mId for mId in mIds):
+                                return True
+                except Exception as exc:
+                    logger.debug("LM Studio model check failed for %s: %s", endpoint, exc)
+            return False
+
+        try:
+            if await asyncio.to_thread(_check_slash_lmstudio):
+                return "lmstudio"
+        except Exception:
+            pass
+
+        return "lmstudio"
+    
+    # No slash - check LM Studio FIRST if available
+    import urllib.request
+    from backend.config import settings
+    
+    def _fetch_lmstudio_models():
+        models_found = []
         for endpoint in ["/v1/models", "/api/v1/models"]:
             url = settings.lmstudio_base_url.rstrip("/") + endpoint
             try:
@@ -88,46 +125,24 @@ def detect_provider(model: str) -> str:
                         import json
                         data = json.loads(resp.read().decode())
                         if "data" in data:
-                            model_ids = [m.get("id", "").lower() for m in data.get("data", [])]
+                            models = [m.get("id", "").lower() for m in data.get("data", [])]
                         elif "models" in data:
-                            model_ids = [m.get("id", "").lower() for m in data.get("models", [])]
+                            models = [m.get("id", "").lower() for m in data.get("models", [])]
                         else:
-                            model_ids = []
-                        if any(model_lower in mId for mId in model_ids):
-                            return "lmstudio"
+                            models = []
+                        models_found.extend(models)
             except Exception as exc:
-                logger.debug("LM Studio model check failed for %s: %s", endpoint, exc)
-
-        return "lmstudio"
+                logger.debug("LM Studio availability check failed for %s: %s", endpoint, exc)
+        return models_found
     
-    # No slash - check LM Studio FIRST if available
-    import urllib.request
-    from backend.config import settings
+    try:
+        lmstudio_models = await asyncio.to_thread(_fetch_lmstudio_models)
+    except Exception:
+        lmstudio_models = []
     
-    lmstudio_available = False
-    lmstudio_models = []
+    lmstudio_available = len(lmstudio_models) > 0
     
-    for endpoint in ["/v1/models", "/api/v1/models"]:
-        url = settings.lmstudio_base_url.rstrip("/") + endpoint
-        try:
-            req = urllib.request.Request(url)
-            with urllib.request.urlopen(req, timeout=3) as resp:
-                if resp.status == 200:
-                    import json
-                    data = json.loads(resp.read().decode())
-                    if "data" in data:
-                        models = [m.get("id", "").lower() for m in data.get("data", [])]
-                    elif "models" in data:
-                        models = [m.get("id", "").lower() for m in data.get("models", [])]
-                    else:
-                        models = []
-                    
-                    lmstudio_models.extend(models)
-                    lmstudio_available = True
-        except Exception as exc:
-            logger.debug("LM Studio availability check failed for %s: %s", endpoint, exc)
-    
-    if lmstudio_available and lmstudio_models:
+    if lmstudio_available:
         # Check PROVIDER_MAP first — explicit mappings take priority over LM Studio
         for prefix, provider in PROVIDER_MAP.items():
             if prefix in model_lower:
@@ -188,7 +203,7 @@ class ModelRouter:
         config: dict[str, Any] | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         """Route a streaming message request to the appropriate provider."""
-        provider_name = detect_provider(model)
+        provider_name = await detect_provider(model)
         provider = self._get_provider(provider_name, config)
 
         try:
