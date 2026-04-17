@@ -31,7 +31,10 @@ class ConfigUpdate(BaseModel):
     opencode_api_key: str | None = None
     ollama_base_url: str | None = None
     lmstudio_base_url: str | None = None
+    llamacpp_base_url: str | None = None
+    gpt4free_base_url: str | None = None
     default_model: str | None = None
+    selected_provider: str | None = None  # explicit provider override
     session_id: str | None = None
 
 
@@ -45,7 +48,10 @@ class ConfigResponse(BaseModel):
     opencode_configured: bool = False
     ollama_base_url: str = ""
     lmstudio_base_url: str = ""
+    llamacpp_base_url: str = ""
+    gpt4free_base_url: str = ""
     default_model: str = ""
+    selected_provider: str = ""
 
 
 # Fallback global config (used when no session_id is provided)
@@ -59,6 +65,9 @@ _global_config: dict[str, Any] = {
     "opencode_api_key": "",
     "ollama_base_url": "",
     "lmstudio_base_url": "",
+    "llamacpp_base_url": "",
+    "gpt4free_base_url": "",
+    "selected_provider": "",
 }
 
 
@@ -79,9 +88,7 @@ def _save_global_config() -> None:
     """Persist _global_config to disk."""
     try:
         _GLOBAL_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _GLOBAL_CONFIG_PATH.write_text(
-            json.dumps(_global_config, indent=2), encoding="utf-8"
-        )
+        _GLOBAL_CONFIG_PATH.write_text(json.dumps(_global_config, indent=2), encoding="utf-8")
     except Exception as exc:
         logger.warning("Failed to save global config to disk: %s", exc)
 
@@ -101,19 +108,62 @@ _PROVIDER_KEY_MAP = {
 
 
 @router.get("/config", response_model=ConfigResponse)
-async def get_config() -> ConfigResponse:
+async def get_config(session_id: str | None = None) -> ConfigResponse:
+    """Return current config.
+
+    ``session_id`` (optional query param): when provided, per-session values
+    (e.g. ``selected_provider``, local base URLs stored in ``model_config``)
+    take precedence over the global fallback. This lets the frontend rehydrate
+    the Settings screen with the user's actual active provider after a reload.
+    """
     from backend.config import settings
+    from backend.services.session_store import session_store
+    from backend.utils.errors import SessionNotFoundError
+
+    session_cfg: dict[str, str] = {}
+    session_keys: dict[str, str] = {}
+    if session_id:
+        try:
+            session = session_store.get(session_id)
+            session_cfg = dict(session.model_config or {})
+            session_keys = dict(session.api_keys or {})
+        except SessionNotFoundError:
+            pass
+
+    def _pick(session_key: str, global_key: str, settings_attr: str = "") -> str:
+        val = session_cfg.get(session_key)
+        if val:
+            return val
+        val = _global_config.get(global_key)
+        if val:
+            return val
+        return getattr(settings, settings_attr, "") if settings_attr else ""
+
+    def _configured(provider: str, settings_attr: str) -> bool:
+        return bool(
+            session_keys.get(provider)
+            or _global_config.get(f"{provider}_api_key")
+            or getattr(settings, settings_attr, "")
+        )
+
     return ConfigResponse(
-        anthropic_configured=bool(settings.anthropic_api_key or _global_config.get("anthropic_api_key")),
-        openai_configured=bool(settings.openai_api_key or _global_config.get("openai_api_key")),
-        google_configured=bool(settings.google_api_key or _global_config.get("google_api_key")),
-        xai_configured=bool(settings.xai_api_key or _global_config.get("xai_api_key")),
-        deepseek_configured=bool(settings.deepseek_api_key or _global_config.get("deepseek_api_key")),
-        openrouter_configured=bool(settings.openrouter_api_key or _global_config.get("openrouter_api_key")),
-        opencode_configured=bool(settings.opencode_api_key or _global_config.get("opencode_api_key")),
-        ollama_base_url=_global_config.get("ollama_base_url") or settings.ollama_base_url,
-        lmstudio_base_url=_global_config.get("lmstudio_base_url") or settings.lmstudio_base_url,
+        anthropic_configured=_configured("anthropic", "anthropic_api_key"),
+        openai_configured=_configured("openai", "openai_api_key"),
+        google_configured=_configured("google", "google_api_key"),
+        xai_configured=_configured("xai", "xai_api_key"),
+        deepseek_configured=_configured("deepseek", "deepseek_api_key"),
+        openrouter_configured=_configured("openrouter", "openrouter_api_key"),
+        opencode_configured=_configured("opencode", "opencode_api_key"),
+        ollama_base_url=_pick("ollama_url", "ollama_base_url", "ollama_base_url"),
+        lmstudio_base_url=_pick("lmstudio_url", "lmstudio_base_url", "lmstudio_base_url"),
+        llamacpp_base_url=_pick("llamacpp_url", "llamacpp_base_url", "llamacpp_base_url"),
+        gpt4free_base_url=_pick("gpt4free_url", "gpt4free_base_url", "gpt4free_base_url"),
         default_model=settings.default_model,
+        selected_provider=(
+            session_cfg.get("selected_provider")
+            or _global_config.get("selected_provider")
+            or ""
+        ),
     )
 
 
@@ -137,10 +187,16 @@ async def update_config(config: ConfigUpdate) -> dict[str, str]:
                     session.model_config["ollama_url"] = value
                 elif field == "lmstudio_base_url":
                     session.model_config["lmstudio_url"] = value
+                elif field == "llamacpp_base_url":
+                    session.model_config["llamacpp_url"] = value
+                elif field == "gpt4free_base_url":
+                    session.model_config["gpt4free_url"] = value
+                elif field == "selected_provider":
+                    session.model_config["selected_provider"] = value
             logger.info("Session %s config updated: %s", config.session_id, list(updates.keys()))
         except SessionNotFoundError:
             pass
-    
+
     # ALWAYS update global config as fallback
     for field, value in updates.items():
         if field in _global_config:
@@ -349,3 +405,39 @@ def get_session_lmstudio_url(session_id: str | None = None) -> str:
             pass
 
     return _global_config.get("lmstudio_base_url") or settings.lmstudio_base_url
+
+
+def get_session_llamacpp_url(session_id: str | None = None) -> str:
+    """Get llama.cpp base URL, checking session config first."""
+    from backend.config import settings
+    from backend.services.session_store import session_store
+    from backend.utils.errors import SessionNotFoundError
+
+    if session_id:
+        try:
+            session = session_store.get(session_id)
+            url = session.model_config.get("llamacpp_url")
+            if url:
+                return url
+        except SessionNotFoundError:
+            pass
+
+    return _global_config.get("llamacpp_base_url") or settings.llamacpp_base_url
+
+
+def get_session_gpt4free_url(session_id: str | None = None) -> str:
+    """Get gpt4free base URL, checking session config first."""
+    from backend.config import settings
+    from backend.services.session_store import session_store
+    from backend.utils.errors import SessionNotFoundError
+
+    if session_id:
+        try:
+            session = session_store.get(session_id)
+            url = session.model_config.get("gpt4free_url")
+            if url:
+                return url
+        except SessionNotFoundError:
+            pass
+
+    return _global_config.get("gpt4free_base_url") or settings.gpt4free_base_url

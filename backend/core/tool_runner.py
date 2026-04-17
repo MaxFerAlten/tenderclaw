@@ -14,7 +14,7 @@ from backend.hooks.dispatcher import hook_dispatcher
 from backend.hooks.permissions import check_permission
 from backend.schemas.hooks import HookPoint
 from backend.schemas.messages import ToolResultBlock, ToolUseBlock
-from backend.schemas.permissions import PermissionDecision, PermissionMode
+from backend.schemas.permissions import PermissionDecision, PermissionMode, ToolCallState
 from backend.schemas.tools import ToolInput, ToolResult
 from backend.schemas.ws import WSPermissionRequest, WSToolResult
 from backend.services.session_store import SessionData
@@ -122,12 +122,23 @@ async def _execute_tool_with_tracing(
     message_id: str,
     send: SendFn,
 ) -> ToolResult:
-    """Internal tool execution with dispatch hooks."""
+    """Internal tool execution with state machine transitions and dispatch hooks.
+
+    State machine:
+        REQUESTED → permission check
+            → DENIED   (explicit deny or user rejection)
+            → APPROVED → RUNNING → COMPLETED
+                                  → FAILED
+    """
+    # --- REQUESTED ---
+    _transition(session, tu, ToolCallState.REQUESTED)
+
     permission_mode = PermissionMode(session.model_config.get("permission_mode", PermissionMode.DEFAULT))
     decision = check_permission(tu.name, tu.input, mode=permission_mode)
 
     if decision == PermissionDecision.DENY:
         logger.info("Tool %s denied by permission rules", tu.name)
+        _transition(session, tu, ToolCallState.DENIED)
         return ToolResult(
             tool_use_id=tu.id,
             content=f"Tool '{tu.name}' was denied by permission rules.",
@@ -137,11 +148,15 @@ async def _execute_tool_with_tracing(
     if decision == PermissionDecision.ASK:
         approved = await _ask_user(tu, session, send)
         if not approved:
+            _transition(session, tu, ToolCallState.DENIED)
             return ToolResult(
                 tool_use_id=tu.id,
                 content=f"Tool '{tu.name}' richiede permesso ma è stato negato o non approvato.",
                 is_error=True,
             )
+
+    # --- APPROVED ---
+    _transition(session, tu, ToolCallState.APPROVED)
 
     tool = tool_registry.get(tu.name)
     ctx = ToolContext(
@@ -157,21 +172,53 @@ async def _execute_tool_with_tracing(
         data={"tool_name": tu.name, "tool_input": tu.input, "tool_use_id": tu.id},
         session_id=session.session_id,
     )
+
+    # --- RUNNING ---
+    _transition(session, tu, ToolCallState.RUNNING)
     try:
         result = await execute_tool(tool, ToolInput(tool_use_id=tu.id, name=tu.name, input=tu.input), ctx)
     except Exception as exc:
+        # --- FAILED ---
+        _transition(session, tu, ToolCallState.FAILED, is_error=True)
         await hook_dispatcher.dispatch(
             HookPoint.TOOL_ERROR,
             data={"tool_name": tu.name, "tool_input": tu.input, "error": str(exc)},
             session_id=session.session_id,
         )
         raise
+
+    # --- COMPLETED / FAILED (tool reported error) ---
+    final_state = ToolCallState.FAILED if result.is_error else ToolCallState.COMPLETED
+    _transition(session, tu, final_state, result_preview=str(result.content)[:200], is_error=result.is_error)
+
     await hook_dispatcher.dispatch(
         HookPoint.TOOL_AFTER,
         data={"tool_name": tu.name, "tool_use_id": tu.id, "result": result.content, "is_error": result.is_error},
         session_id=session.session_id,
     )
     return result
+
+
+def _transition(
+    session: SessionData,
+    tu: ToolUseBlock,
+    state: ToolCallState,
+    result_preview: str = "",
+    is_error: bool = False,
+) -> None:
+    """Record a tool-state transition on the session (best-effort, never raises)."""
+    try:
+        session.record_tool_state(
+            tool_use_id=tu.id,
+            tool_name=tu.name,
+            state=state.value,
+            tool_input=tu.input,
+            result_preview=result_preview,
+            is_error=is_error,
+        )
+        logger.debug("tool_state tool=%s id=%s state=%s", tu.name, tu.id, state.value)
+    except Exception as exc:
+        logger.warning("Failed to record tool state: %s", exc)
 
 
 async def _ask_user(tu: ToolUseBlock, session: SessionData, send: SendFn) -> bool:

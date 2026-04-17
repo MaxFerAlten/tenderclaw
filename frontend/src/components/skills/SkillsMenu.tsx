@@ -1,10 +1,34 @@
-/** Skills Menu — browse, search, and select skills from the TenderClaw system. */
+/** Skills Menu — browse, search, and select skills from the TenderClaw system.
+ *
+ * Sprint 5: shows auto-selected skill badge when SkillSelector has a match.
+ */
 
 import { useState, useEffect, useCallback } from "react";
-import { Search, X, Zap, FileText, Play, Loader, AlertCircle, CheckCircle } from "lucide-react";
+import { Search, X, Zap, FileText, Play, Loader, AlertCircle, CheckCircle, Sparkles } from "lucide-react";
 import { skillsApi, type SkillInfo, type SkillDetail } from "../../api/skillsApi";
 import { useSessionStore } from "../../stores/sessionStore";
 import { useKeybindingContext } from "../../keybindings";
+
+interface AutoSkillBadgeProps {
+  skillName: string;
+  confidence: number;
+  reason: string;
+  onSelect: (name: string) => void;
+}
+
+function AutoSkillBadge({ skillName, confidence, reason, onSelect }: AutoSkillBadgeProps) {
+  return (
+    <button
+      onClick={() => onSelect(skillName)}
+      title={reason}
+      className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-violet-500/10 border border-violet-500/30 hover:bg-violet-500/20 transition-colors text-left"
+    >
+      <Sparkles className="w-3 h-3 text-violet-400 shrink-0" />
+      <span className="text-xs font-medium text-violet-300">{skillName}</span>
+      <span className="text-[10px] text-violet-500 ml-1">{Math.round(confidence * 100)}%</span>
+    </button>
+  );
+}
 
 interface SkillsMenuProps {
   isOpen: boolean;
@@ -22,6 +46,7 @@ export function SkillsMenu({ isOpen, onClose }: SkillsMenuProps) {
   const [error, setError] = useState("");
   const [executing, setExecuting] = useState(false);
   const [executeResult, setExecuteResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [autoSkill, setAutoSkill] = useState<{ skill_name: string; confidence: number; reason: string } | null>(null);
 
   useEffect(() => {
     if (isOpen && skills.length === 0) {
@@ -83,6 +108,28 @@ export function SkillsMenu({ isOpen, onClose }: SkillsMenuProps) {
     s.trigger.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
+  // Auto-select skill when search query changes (debounced via useEffect)
+  useEffect(() => {
+    if (!searchQuery || searchQuery.length < 5) {
+      setAutoSkill(null);
+      return;
+    }
+    const timer = setTimeout(async () => {
+      try {
+        const result = await skillsApi.select(searchQuery);
+        const best = result.matches?.[0];
+        if (best?.matched) {
+          setAutoSkill({ skill_name: best.skill_name, confidence: best.confidence, reason: best.reason });
+        } else {
+          setAutoSkill(null);
+        }
+      } catch {
+        setAutoSkill(null);
+      }
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
   const handleClose = useCallback(() => {
     setSelectedSkill(null);
     setSearchQuery("");
@@ -119,18 +166,29 @@ export function SkillsMenu({ isOpen, onClose }: SkillsMenuProps) {
           </button>
         </div>
 
-        {/* Search */}
-        <div className="px-6 py-3 border-b border-zinc-800">
+        {/* Search + auto-skill badge */}
+        <div className="px-6 py-3 border-b border-zinc-800 space-y-2">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search skills..."
+              placeholder="Search skills or describe your task..."
               className="w-full pl-10 pr-4 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-sm focus:outline-none focus:border-blue-500"
             />
           </div>
+          {autoSkill && (
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] text-zinc-500 uppercase tracking-wide">Auto-selected:</span>
+              <AutoSkillBadge
+                skillName={autoSkill.skill_name}
+                confidence={autoSkill.confidence}
+                reason={autoSkill.reason}
+                onSelect={(name) => loadSkillDetail(name)}
+              />
+            </div>
+          )}
         </div>
 
         {/* Content */}

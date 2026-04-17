@@ -6,9 +6,49 @@ Mirrors Claude Code's modular prompt architecture with cacheable + dynamic secti
 from __future__ import annotations
 
 import logging
+import os
+import platform
 from datetime import UTC, datetime
 
 logger = logging.getLogger("tenderclaw.core.system_prompt")
+
+
+def _platform_context() -> str:
+    """Build an OS/shell section so the model picks the right commands.
+
+    Without this the model silently assumes POSIX and emits `ls -la`, `cat`,
+    `grep` etc. on Windows where `cmd.exe` rejects them, producing a loop of
+    failed tool calls (and repeated permission prompts) that looks like a
+    hang to the user.
+    """
+    sysname = platform.system()  # 'Windows', 'Linux', 'Darwin'
+    release = platform.release()
+    arch = platform.machine()
+
+    if sysname == "Windows":
+        shell = "cmd.exe (Windows command prompt — POSIX utilities like ls/cat/grep are NOT available)"
+        guidance = (
+            "- File listing: use `dir` (cmd) or `Get-ChildItem` (powershell), NOT `ls`.\n"
+            "- Read file: use `type file.txt` (cmd) or `Get-Content file.txt` (powershell), NOT `cat`.\n"
+            "- Search: use `findstr` (cmd) or `Select-String` (powershell), NOT `grep`.\n"
+            "- For multi-step POSIX-style scripting, prefix the whole command with `powershell -Command \"...\"`.\n"
+            "- Path separators: backslash `\\` works in cmd; in powershell both `/` and `\\` work.\n"
+            "- PREFER the specialised tools (Grep, Glob, FileRead, FileWrite) over Bash for portable file ops."
+        )
+    elif sysname == "Darwin":
+        shell = os.environ.get("SHELL", "/bin/zsh")
+        guidance = "- Standard POSIX tools available: ls, cat, grep, find, sed, awk, etc."
+    else:  # Linux / other Unix
+        shell = os.environ.get("SHELL", "/bin/bash")
+        guidance = "- Standard POSIX tools available: ls, cat, grep, find, sed, awk, etc."
+
+    return (
+        "\n## Platform\n"
+        f"- OS: {sysname} {release} ({arch})\n"
+        f"- Shell: {shell}\n"
+        "### Shell guidance\n"
+        f"{guidance}"
+    )
 
 BASE_SYSTEM_PROMPT = """\
 You are TenderClaw, an advanced AI coding assistant powered by multiple AI models.
@@ -84,6 +124,11 @@ def build_system_prompt(
     # Dynamic section — not cacheable
     parts.append(f"\n## Context\n- Current date: {datetime.now(UTC).strftime('%Y-%m-%d')}")
     parts.append(f"- Working directory: {working_directory}")
+
+    # Platform / shell guidance — critical so the model doesn't emit POSIX
+    # commands on Windows (ls, cat, grep) which cmd.exe rejects, producing a
+    # retry loop that looks like a hang to the user.
+    parts.append(_platform_context())
 
     if append:
         parts.append(f"\n## Additional Instructions\n{append}")

@@ -32,6 +32,10 @@ PROVIDER_MAP: dict[str, str] = {
     "trinity-large-preview-free": "opencode",
     "big-pickle": "opencode",
     "opencode": "opencode",
+    # llama.cpp local models (GGUF files)
+    ".gguf": "llamacpp",
+    # gpt4free models
+    "gpt4free": "gpt4free",
     # Other providers
     "claude": "anthropic",
     "gpt": "openai",
@@ -48,7 +52,7 @@ PROVIDER_MAP: dict[str, str] = {
     "codellama": "ollama",
     "phi": "ollama",
     "qwen": "ollama",
-    "gemma": "lmstudio",
+    "gemma": "llamacpp",
     "llama": "ollama",
     "openrouter": "openrouter",
 }
@@ -56,31 +60,85 @@ PROVIDER_MAP: dict[str, str] = {
 
 import asyncio
 
+
 async def detect_provider(model: str) -> str:
     """Detect the provider from a model name."""
     model_lower = model.lower()
-    
+
+    # Check if model has .gguf extension - likely a local llama.cpp model
+    if model_lower.endswith(".gguf"):
+        return "llamacpp"
+
     # Check if model has a slash (namespaced format)
     if "/" in model:
+        # Check llama.cpp first for GGUF model names in namespaced format
+        import urllib.request
+        from backend.config import settings
+
+        # Check if it's a GGUF model on llama.cpp
+        def _check_llamacpp_slash():
+            base = settings.llamacpp_base_url.rstrip("/")
+            if base.endswith("/v1"):
+                base = base[:-3]
+            for endpoint in ["/v1/models", "/models"]:
+                url = base + endpoint
+                try:
+                    req = urllib.request.Request(url)
+                    with urllib.request.urlopen(req, timeout=3) as resp:
+                        if resp.status == 200:
+                            import json
+
+                            data = json.loads(resp.read().decode())
+                            model_list = data.get("data", []) or data.get("models", [])
+                            model_ids = [m.get("id", "").lower() or m.get("name", "").lower() for m in model_list]
+                            if any(model_lower in mId or mId in model_lower for mId in model_ids):
+                                return "llamacpp"
+                except:
+                    pass
+            return None
+
+        try:
+            result = await asyncio.to_thread(_check_llamacpp_slash)
+            if result:
+                return result
+        except:
+            pass
+
+        # Check known OpenRouter prefixes first
         # Check known OpenRouter prefixes first
         openrouter_prefixes = (
-            "anthropic/", "openai/", "google/", "mistral/", "meta-llama/", 
-            "mistralai/", "NousResearch/", "teknium/", "deepseek/", "xai/", 
-            "amazon/", "qwen/", "nvidia/", "liuunot/", "nousresearch/",
-            "cognitivecomputations/", "meta/", "llama/", "openchat/"
+            "anthropic/",
+            "openai/",
+            "google/",
+            "mistral/",
+            "meta-llama/",
+            "mistralai/",
+            "NousResearch/",
+            "teknium/",
+            "deepseek/",
+            "xai/",
+            "amazon/",
+            "qwen/",
+            "nvidia/",
+            "liuunot/",
+            "nousresearch/",
+            "cognitivecomputations/",
+            "meta/",
+            "llama/",
+            "openchat/",
         )
         if any(model_lower.startswith(p) for p in openrouter_prefixes):
             return "openrouter"
-        
+
         # Check OpenCode prefixes
         opencode_prefixes = ("opencode/",)
         if any(model_lower.startswith(p) for p in opencode_prefixes):
             return "opencode"
-        
+
         # Unknown namespaced model - try LM Studio
         import urllib.request
         from backend.config import settings
-        
+
         def _check_slash_lmstudio():
             for endpoint in ["/v1/models", "/api/v1/models"]:
                 url = settings.lmstudio_base_url.rstrip("/") + endpoint
@@ -89,6 +147,7 @@ async def detect_provider(model: str) -> str:
                     with urllib.request.urlopen(req, timeout=3) as resp:
                         if resp.status == 200:
                             import json
+
                             data = json.loads(resp.read().decode())
                             if "data" in data:
                                 mIds = [m.get("id", "").lower() for m in data.get("data", [])]
@@ -109,11 +168,11 @@ async def detect_provider(model: str) -> str:
             logger.debug("LM Studio slash-prefix check failed: %s", exc)
 
         return "lmstudio"
-    
+
     # No slash - check LM Studio FIRST if available
     import urllib.request
     from backend.config import settings
-    
+
     def _fetch_lmstudio_models():
         models_found = []
         for endpoint in ["/v1/models", "/api/v1/models"]:
@@ -123,6 +182,7 @@ async def detect_provider(model: str) -> str:
                 with urllib.request.urlopen(req, timeout=3) as resp:
                     if resp.status == 200:
                         import json
+
                         data = json.loads(resp.read().decode())
                         if "data" in data:
                             models = [m.get("id", "").lower() for m in data.get("data", [])]
@@ -134,15 +194,15 @@ async def detect_provider(model: str) -> str:
             except Exception as exc:
                 logger.debug("LM Studio availability check failed for %s: %s", endpoint, exc)
         return models_found
-    
+
     try:
         lmstudio_models = await asyncio.to_thread(_fetch_lmstudio_models)
     except Exception as exc:
         logger.debug("LM Studio model fetch failed: %s", exc)
         lmstudio_models = []
-    
+
     lmstudio_available = len(lmstudio_models) > 0
-    
+
     if lmstudio_available:
         # Check PROVIDER_MAP first — explicit mappings take priority over LM Studio
         for prefix, provider in PROVIDER_MAP.items():
@@ -151,20 +211,42 @@ async def detect_provider(model: str) -> str:
         # Check if model name is in LM Studio's available models
         if any(model_lower in mId for mId in lmstudio_models):
             return "lmstudio"
-    
+
     # Check PROVIDER_MAP before defaulting to lmstudio
     for prefix, provider in PROVIDER_MAP.items():
         if prefix in model_lower:
             return provider
-    
+
     # If LM Studio was checked but model not found, check if any partial match
     if lmstudio_available:
         for mId in lmstudio_models:
             if model_lower in mId or mId in model_lower:
                 return "lmstudio"
         return "lmstudio"
-    
+
     return "anthropic"
+
+
+async def resolve_provider(model: str, config: dict[str, Any] | None = None) -> str:
+    """Resolve the provider for a model, honoring explicit user selection.
+
+    Priority:
+      1. ``config["selected_provider"]`` when set — the user's explicit choice
+         wins over any prefix-based heuristic. This is what allows a user to
+         route ``claude-3-5-sonnet`` or ``gpt-4o`` through gpt4free without
+         triggering the Anthropic / OpenAI API-key check.
+      2. :func:`detect_provider` as a fallback (prefix matching + network
+         probes for LM Studio / llama.cpp).
+
+    Call this anywhere you need to map a ``(model, session_config)`` pair to
+    a provider name. Callers that don't have config (e.g. the OpenAI gateway
+    with no session context) can pass ``None`` and get the legacy behaviour.
+    """
+    if config:
+        selected = config.get("selected_provider")
+        if selected:
+            return selected
+    return await detect_provider(model)
 
 
 class ModelRouter:
@@ -175,17 +257,29 @@ class ModelRouter:
 
     def list_providers(self) -> list[str]:
         """List all available provider names."""
-        return ["anthropic", "openai", "google", "xai", "deepseek", "ollama", "lmstudio", "openrouter", "opencode"]
+        return [
+            "anthropic",
+            "openai",
+            "google",
+            "xai",
+            "deepseek",
+            "ollama",
+            "lmstudio",
+            "llamacpp",
+            "gpt4free",
+            "openrouter",
+            "opencode",
+        ]
 
     def _get_provider(self, name: str, config: dict[str, Any] | None = None) -> BaseProvider:
         """Lazy-init a provider by name."""
-        # For Ollama/LM Studio/OpenRouter/OpenCode, always recreate to use new URL/key
-        if name in ("ollama", "lmstudio", "openrouter", "opencode"):
+        # For Ollama/LM Studio/llama.cpp/gpt4free/OpenRouter/OpenCode, always recreate to use new URL/key
+        if name in ("ollama", "lmstudio", "llamacpp", "gpt4free", "openrouter", "opencode"):
             logger.info(f"_get_provider: creating fresh provider for {name}")
             provider = _create_provider(name, config)
             self._providers[name] = provider
             return provider
-        
+
         if name in self._providers:
             return self._providers[name]
 
@@ -204,7 +298,7 @@ class ModelRouter:
         config: dict[str, Any] | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         """Route a streaming message request to the appropriate provider."""
-        provider_name = await detect_provider(model)
+        provider_name = await resolve_provider(model, config)
         provider = self._get_provider(provider_name, config)
 
         try:
@@ -256,12 +350,15 @@ def _create_provider(name: str, config: dict[str, Any] | None = None) -> BasePro
     """Create a provider instance by name."""
     if name == "anthropic":
         from backend.services.providers.anthropic_provider import AnthropicProvider
+
         return AnthropicProvider()
     if name == "openai":
         from backend.services.providers.openai_provider import OpenAIProvider
+
         return OpenAIProvider()
     if name == "google":
         from backend.services.providers.google_provider import GoogleProvider
+
         return GoogleProvider()
     if name == "deepseek":
         # Route deepseek to OpenRouter
@@ -283,8 +380,9 @@ def _create_provider(name: str, config: dict[str, Any] | None = None) -> BasePro
             key = _global_config.get("openrouter_api_key")
         if not key:
             from backend.config import settings
+
             key = settings.openrouter_api_key
-        
+
         logger.info(f"_create_provider(openrouter): key from config='{str(key)[:20]}...'")
         return OpenRouterProvider(api_key=key)
     if name == "openrouter":
@@ -306,25 +404,39 @@ def _create_provider(name: str, config: dict[str, Any] | None = None) -> BasePro
             key = _global_config.get("openrouter_api_key")
         if not key:
             from backend.config import settings
+
             key = settings.openrouter_api_key
-        
+
         logger.info(f"_create_provider(openrouter): key from config='{str(key)[:20]}...'")
         return OpenRouterProvider(api_key=key)
     if name == "xai":
         from backend.services.providers.xai_provider import XAIProvider
+
         return XAIProvider()
     if name == "ollama":
         from backend.services.providers.ollama_provider import OllamaProvider
+
         url = config.get("ollama_url") if config else None
         return OllamaProvider(base_url=url)
     if name == "lmstudio":
         from backend.services.providers.lmstudio_provider import LMStudioProvider
+
         url = config.get("lmstudio_url") if config else None
         return LMStudioProvider(base_url=url)
+    if name == "llamacpp":
+        from backend.services.providers.llamacpp_provider import LlamaCppProvider
+
+        url = config.get("llamacpp_url") if config else None
+        return LlamaCppProvider(base_url=url)
+    if name == "gpt4free":
+        from backend.services.providers.gpt4free_provider import Gpt4FreeProvider
+
+        url = config.get("gpt4free_url") if config else None
+        return Gpt4FreeProvider(base_url=url)
     if name == "opencode":
         from backend.services.providers.opencode_provider import OpenCodeProvider
         from backend.api.config import _global_config
-        
+
         key = None
         if config:
             key = config.get("opencode_api_key")
@@ -332,6 +444,7 @@ def _create_provider(name: str, config: dict[str, Any] | None = None) -> BasePro
             key = _global_config.get("opencode_api_key")
         if not key:
             from backend.config import settings
+
             key = settings.opencode_api_key
         return OpenCodeProvider(api_key=key)
 

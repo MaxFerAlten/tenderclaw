@@ -1,4 +1,9 @@
-"""Keyword detector hook."""
+"""Keyword detector hook.
+
+Sprint 6 deduplication: KeywordDetectorHook now delegates entirely to the
+canonical KeywordDetector engine in ``backend.core.keyword_detection``.
+The duplicate KEYWORDS dict that previously lived here has been removed.
+"""
 
 from __future__ import annotations
 
@@ -9,21 +14,12 @@ from backend.hooks import BaseHook, HookContext, HookEvent, HookResult
 
 
 class KeywordDetectorHook(BaseHook):
-    """
-    Detects keywords in messages and activates modes.
-    
-    Detects: ultrawork, search, analyze, and other mode triggers.
-    """
+    """Detects keywords in messages by delegating to the canonical engine.
 
-    KEYWORDS = {
-        "ultrawork": ["ultrawork", "ulw", "parallel", "run in parallel"],
-        "search": ["search", "find", "grep"],
-        "analyze": ["analyze", "investigate", "debug this"],
-        "plan": ["plan", "let's plan", "create a plan"],
-        "review": ["review", "code review", "check code"],
-        "ralph": ["ralph", "don't stop", "keep going", "finish this"],
-        "deep": ["deep", "thorough", "comprehensive"],
-    }
+    Uses ``backend.core.keyword_detection.keyword_detector`` (24 mappings)
+    as the single source of truth, so keyword additions only need to happen
+    in one place.
+    """
 
     def __init__(self):
         super().__init__(
@@ -32,29 +28,25 @@ class KeywordDetectorHook(BaseHook):
         )
 
     async def execute(self, context: HookContext) -> HookResult:
-        """Detect keywords in message."""
+        """Detect keywords in message using the canonical engine."""
         if not context.message:
             return HookResult()
 
-        message_lower = context.message.lower()
-        detected: list[str] = []
+        from backend.core.keyword_detection import keyword_detector as _engine
 
-        for mode, keywords in self.KEYWORDS.items():
-            for keyword in keywords:
-                if keyword.lower() in message_lower:
-                    detected.append(mode)
-                    break
+        matches = _engine.detect(context.message)
 
-        if detected:
+        if matches:
+            detected = [m.action for m in matches]
             context.set("detected_keywords", detected)
             context.set("primary_keyword", detected[0])
-            self.logger.info(f"Detected keywords: {detected}")
+            self.logger.info("Detected keywords: %s", detected)
 
         return HookResult(
-            handled=len(detected) > 0,
+            handled=len(matches) > 0,
             metadata={
-                "keywords_found": detected,
-                "count": len(detected)
+                "keywords_found": [m.action for m in matches],
+                "count": len(matches),
             }
         )
 
@@ -62,7 +54,7 @@ class KeywordDetectorHook(BaseHook):
 class RalphLoopHook(BaseHook):
     """
     Ralph self-referential loop hook.
-    
+
     Manages the ralph loop that continues until completion.
     """
 
@@ -94,7 +86,7 @@ class RalphLoopHook(BaseHook):
 
         if context.event == HookEvent.SESSION_IDLE and self.loop_active:
             self.current_iteration += 1
-            
+
             if self.current_iteration >= self.max_iterations:
                 self.loop_active = False
                 context.set("ralph_max_iterations", True)
@@ -105,7 +97,7 @@ class RalphLoopHook(BaseHook):
                         "iterations": self.current_iteration
                     }
                 )
-                
+
             context.set("ralph_continue", True)
             return HookResult(handled=True, metadata={"continue": True})
 
@@ -116,12 +108,12 @@ class RalphLoopHook(BaseHook):
         self.loop_active = True
         self.max_iterations = max_iterations
         self.current_iteration = 0
-        self.logger.info(f"Ralph loop started (max: {max_iterations})")
+        self.logger.info("Ralph loop started (max: %d)", max_iterations)
 
     def stop_loop(self) -> None:
         """Stop the ralph loop."""
         self.loop_active = False
-        self.logger.info(f"Ralph loop stopped at iteration {self.current_iteration}")
+        self.logger.info("Ralph loop stopped at iteration %d", self.current_iteration)
 
     @property
     def is_active(self) -> bool:
@@ -132,7 +124,7 @@ class RalphLoopHook(BaseHook):
 class ContextInjectorHook(BaseHook):
     """
     Context injection hook.
-    
+
     Auto-injects AGENTS.md, README.md, and rules when reading files.
     """
 
@@ -184,7 +176,7 @@ class ContextInjectorHook(BaseHook):
 class SessionRecoveryHook(BaseHook):
     """
     Session recovery hook.
-    
+
     Recovers from common session errors.
     """
 
@@ -197,7 +189,7 @@ class SessionRecoveryHook(BaseHook):
     async def execute(self, context: HookContext) -> HookResult:
         """Attempt to recover from error."""
         error_msg = context.get("error", "")
-        
+
         recovery_strategies = {
             "context_window": "compact_context",
             "rate_limit": "wait_and_retry",
@@ -210,7 +202,7 @@ class SessionRecoveryHook(BaseHook):
             if error_type in error_msg.lower():
                 context.set("recovery_strategy", strategy)
                 context.set("recovery_needed", True)
-                self.logger.info(f"Recovery strategy for {error_type}: {strategy}")
+                self.logger.info("Recovery strategy for %s: %s", error_type, strategy)
                 return HookResult(
                     handled=True,
                     metadata={
@@ -225,7 +217,7 @@ class SessionRecoveryHook(BaseHook):
 class CommentCheckerHook(BaseHook):
     """
     Comment checker hook.
-    
+
     Detects AI slop in comments and suggests improvements.
     """
 
@@ -253,7 +245,7 @@ class CommentCheckerHook(BaseHook):
             return HookResult()
 
         slop_found: list[dict[str, Any]] = []
-        
+
         for i, line in enumerate(output.split("\n")):
             for pattern in self.slop_regex:
                 if pattern.search(line):

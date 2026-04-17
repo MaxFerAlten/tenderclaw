@@ -2,13 +2,18 @@
 
 Hooks fire at defined lifecycle points (session, turn, tool, message).
 They run in priority order, and a handler can bail out to stop the chain.
+
+Sprint 6: added ConflictResolution strategies for MODIFY actions.
+Handlers can declare LAST_WIN (default), FIRST_WIN, or MERGE to control how
+their modifications interact with data already written by earlier hooks.
 """
 
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Callable, Awaitable
+from enum import Enum
+from typing import Any, Callable, Awaitable
 
 from backend.schemas.hooks import (
     HookAction,
@@ -32,6 +37,46 @@ _TIER_PRIORITY: dict[HookTier, int] = {
 }
 
 
+class ConflictResolution(str, Enum):
+    """Strategy for resolving key conflicts when a MODIFY hook writes data
+    that overlaps with keys already present in the event payload.
+
+    LAST_WIN  — (default) later hook's value overwrites the existing value.
+    FIRST_WIN — existing value is preserved; the new value is silently dropped.
+    MERGE     — lists are concatenated, dicts are shallow-merged (new keys added,
+                 existing keys updated), scalars fall back to LAST_WIN.
+    """
+
+    LAST_WIN = "last_win"
+    FIRST_WIN = "first_win"
+    MERGE = "merge"
+
+
+def _apply_modify(event: HookEvent, result: HookResult, strategy: ConflictResolution) -> None:
+    """Apply a MODIFY result's data onto *event.data* using *strategy*."""
+    for key, new_val in result.data.items():
+        if key not in event.data:
+            event.data[key] = new_val
+            continue
+
+        existing = event.data[key]
+
+        if strategy == ConflictResolution.LAST_WIN:
+            event.data[key] = new_val
+
+        elif strategy == ConflictResolution.FIRST_WIN:
+            pass  # keep existing — do nothing
+
+        elif strategy == ConflictResolution.MERGE:
+            if isinstance(existing, list) and isinstance(new_val, list):
+                event.data[key] = existing + new_val
+            elif isinstance(existing, dict) and isinstance(new_val, dict):
+                event.data[key] = {**existing, **new_val}
+            else:
+                # Incompatible types — fall back to LAST_WIN
+                event.data[key] = new_val
+
+
 @dataclass
 class HookEntry:
     """A registered hook handler with metadata."""
@@ -41,6 +86,7 @@ class HookEntry:
     handler: HookHandler
     tier: HookTier = HookTier.SKILL
     priority: int = 0  # Within-tier priority (lower = earlier)
+    conflict_resolution: ConflictResolution = ConflictResolution.LAST_WIN
 
     @property
     def effective_priority(self) -> int:
@@ -61,15 +107,17 @@ class HookRegistry:
         handler: HookHandler,
         tier: HookTier = HookTier.SKILL,
         priority: int = 0,
+        conflict_resolution: ConflictResolution = ConflictResolution.LAST_WIN,
     ) -> None:
         """Register a hook handler for a lifecycle point.
 
         Args:
-            name: Unique name for this hook.
-            point: Lifecycle point to attach to.
-            handler: Async callable receiving HookEvent, returning HookResult.
-            tier: Priority tier (core > continuation > skill > transform).
-            priority: Within-tier ordering (lower runs first).
+            name:                Unique name for this hook.
+            point:               Lifecycle point to attach to.
+            handler:             Async callable receiving HookEvent, returning HookResult.
+            tier:                Priority tier (core > continuation > skill > transform).
+            priority:            Within-tier ordering (lower runs first).
+            conflict_resolution: How MODIFY data merges with existing event.data.
         """
         entry = HookEntry(
             name=name,
@@ -77,13 +125,14 @@ class HookRegistry:
             handler=handler,
             tier=tier,
             priority=priority,
+            conflict_resolution=conflict_resolution,
         )
 
         if point not in self._hooks:
             self._hooks[point] = []
         self._hooks[point].append(entry)
         self._hooks[point].sort(key=lambda e: e.effective_priority)
-        logger.debug("Hook registered: %s at %s (tier=%s)", name, point.value, tier.value)
+        logger.debug("Hook registered: %s at %s (tier=%s, conflict=%s)", name, point.value, tier.value, conflict_resolution.value)
 
     def unregister(self, name: str) -> None:
         """Remove all hooks with the given name."""
@@ -95,7 +144,7 @@ class HookRegistry:
 
         If any hook returns BAIL, execution stops and that result is returned.
         If a hook returns MODIFY, its data is merged into the event for
-        subsequent hooks.
+        subsequent hooks using the hook's declared ConflictResolution strategy.
 
         Returns:
             The last HookResult (or CONTINUE with empty data if no hooks ran).
@@ -120,7 +169,7 @@ class HookRegistry:
                 return result
 
             if result.action == HookAction.MODIFY:
-                event.data.update(result.data)
+                _apply_modify(event, result, entry.conflict_resolution)
 
         return last_result
 

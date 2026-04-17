@@ -68,6 +68,12 @@ class SessionState:
     should_abort: bool = False
     is_expired: bool = False
     checkpoint_count: int = 0
+    # Memory context injected at session start (not persisted across checkpoints)
+    relevant_memory: str = ""
+    # How many signals were auto-saved during this session
+    signals_saved: int = 0
+    # Serialized pending tool calls — survives checkpoints for reliable resume
+    pending_tool_calls: List[Dict[str, Any]] = field(default_factory=list)
 
     def touch(self) -> None:
         """Update last activity timestamp."""
@@ -182,5 +188,125 @@ class SessionState:
                 pass
             except Exception as e:
                 logger.error("Error checking session %s for expiry: %s", session_id, e)
-        
+
         return removed_count
+
+    # ------------------------------------------------------------------
+    # Tool lifecycle tracking (Sprint 2)
+    # ------------------------------------------------------------------
+
+    def record_tool_state(
+        self,
+        tool_use_id: str,
+        tool_name: str,
+        state: str,
+        tool_input: Optional[Dict[str, Any]] = None,
+        result_preview: str = "",
+        is_error: bool = False,
+    ) -> None:
+        """Create or update the state record for a tool call.
+
+        Keeps only the last entry for each tool_use_id. Entries for
+        COMPLETED/FAILED/DENIED are retained in the list so resume can
+        reconstruct what happened; entries older than the last 50 are dropped.
+        """
+        from backend.schemas.permissions import ToolCallState
+
+        now = datetime.now(UTC).isoformat()
+        # Find existing record
+        for record in self.pending_tool_calls:
+            if record.get("tool_use_id") == tool_use_id:
+                record["state"] = state
+                if result_preview:
+                    record["result_preview"] = result_preview[:200]
+                record["is_error"] = is_error
+                if state in (
+                    ToolCallState.COMPLETED.value,
+                    ToolCallState.FAILED.value,
+                    ToolCallState.DENIED.value,
+                ):
+                    record["resolved_at"] = now
+                return
+
+        # New record
+        entry: Dict[str, Any] = {
+            "tool_use_id": tool_use_id,
+            "tool_name": tool_name,
+            "state": state,
+            "input": tool_input or {},
+            "result_preview": result_preview[:200] if result_preview else "",
+            "is_error": is_error,
+            "created_at": now,
+            "resolved_at": None,
+        }
+        self.pending_tool_calls.append(entry)
+        # Keep bounded — drop resolved entries beyond 50
+        if len(self.pending_tool_calls) > 50:
+            from backend.schemas.permissions import ToolCallState
+            resolved_states = {
+                ToolCallState.COMPLETED.value,
+                ToolCallState.FAILED.value,
+                ToolCallState.DENIED.value,
+            }
+            unresolved = [r for r in self.pending_tool_calls if r["state"] not in resolved_states]
+            resolved = [r for r in self.pending_tool_calls if r["state"] in resolved_states]
+            self.pending_tool_calls = unresolved + resolved[-50:]
+
+    def get_unresolved_tool_calls(self) -> List[Dict[str, Any]]:
+        """Return tool calls still in REQUESTED, APPROVED, or RUNNING state."""
+        from backend.schemas.permissions import ToolCallState
+        unresolved = {
+            ToolCallState.REQUESTED.value,
+            ToolCallState.APPROVED.value,
+            ToolCallState.RUNNING.value,
+        }
+        return [r for r in self.pending_tool_calls if r["state"] in unresolved]
+
+    def load_memory_context(self, project_root: str = ".") -> None:
+        """Load relevant memory at session start and store in relevant_memory.
+
+        Called once during session initialization. Builds a prompt-ready block
+        from USER + REPO + TEAM scopes so it can be prepended to the system prompt.
+        """
+        try:
+            from backend.memory.memory_manager import memory_manager
+            from backend.memory.memory_types import MemoryScope
+            # Use the first few existing messages (if resuming) or an empty list
+            context_block = memory_manager.build_context_for_prompt(
+                self.messages[-4:] if self.messages else [],
+                project_root=project_root,
+                scopes=[MemoryScope.USER, MemoryScope.REPO, MemoryScope.TEAM],
+            )
+            self.relevant_memory = context_block
+            logger.info(
+                "Session %s loaded memory context (%d chars)",
+                self.session_id,
+                len(context_block),
+            )
+        except Exception as exc:
+            logger.warning("Failed to load memory context for session %s: %s", self.session_id, exc)
+            self.relevant_memory = ""
+
+    def trigger_memory_scan(self, project_root: str = ".") -> int:
+        """Extract memory signals from conversation and auto-save them.
+
+        Called at the end of each turn. Returns number of signals saved.
+        """
+        if not self.messages:
+            return 0
+        try:
+            from backend.memory.memory_scan import extract_signals_from_transcript
+            from backend.memory.memory_manager import memory_manager
+            signals = extract_signals_from_transcript(self.messages, session_id=self.session_id)
+            saved = memory_manager.auto_save_signals(signals, project_root=project_root)
+            self.signals_saved += saved
+            logger.info(
+                "Session %s end-of-turn scan: %d signals saved (total: %d)",
+                self.session_id,
+                saved,
+                self.signals_saved,
+            )
+            return saved
+        except Exception as exc:
+            logger.warning("Memory scan failed for session %s: %s", self.session_id, exc)
+            return 0

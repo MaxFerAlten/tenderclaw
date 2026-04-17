@@ -1,12 +1,17 @@
 """Coordinator mode for managing multiple agent sessions."""
 
+from __future__ import annotations
+
 import json
+import logging
 import os
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Callable, Awaitable
+from typing import Any, Callable, Awaitable
 import asyncio
 import uuid
+
+logger = logging.getLogger("tenderclaw.orchestration.coordinator")
 
 
 class CoordinatorState(str, Enum):
@@ -123,6 +128,97 @@ class Coordinator:
         self.team_name = None
         self.num_workers = 0
         return {"status": "shutdown"}
+
+    def choose_task_owner(
+        self,
+        task_id: str,
+        candidates: list[str],
+        *,
+        prefer_agent: str | None = None,
+    ) -> str | None:
+        """Select the best candidate agent to own a task.
+
+        Selection criteria (in priority order):
+        1. ``prefer_agent`` if it is in *candidates*.
+        2. The candidate that currently owns the fewest running tasks.
+        3. The first candidate in the list (stable fallback).
+
+        Returns the chosen agent name, or ``None`` if *candidates* is empty.
+        """
+        if not candidates:
+            return None
+
+        if prefer_agent and prefer_agent in candidates:
+            logger.info("choose_task_owner: preferred agent %s chosen for task %s", prefer_agent, task_id)
+            return prefer_agent
+
+        # Count how many running tasks each candidate already owns
+        load: dict[str, int] = {c: 0 for c in candidates}
+        for task in self.tasks:
+            if task.status == "running" and task.assignee in load:
+                load[task.assignee] += 1
+
+        chosen = min(candidates, key=lambda c: load[c])
+        logger.info(
+            "choose_task_owner: agent %s chosen for task %s (load=%s)",
+            chosen, task_id, load,
+        )
+        return chosen
+
+    def rebalance_workers(
+        self,
+        available_agents: list[str],
+        *,
+        max_per_agent: int = 3,
+    ) -> dict[str, Any]:
+        """Reassign pending tasks to underloaded agents.
+
+        Iterates over all ``pending`` tasks and assigns each to the agent in
+        *available_agents* that currently has the fewest running tasks, as long
+        as that agent hasn't exceeded *max_per_agent* running tasks.
+
+        Returns a summary dict with ``reassigned`` (count), ``skipped`` (count),
+        and ``assignments`` (list of task_id → agent mappings).
+        """
+        if not available_agents:
+            pending_count = sum(1 for t in self.tasks if t.status == "pending")
+            return {"reassigned": 0, "skipped": pending_count, "assignments": []}
+
+        # Current load per available agent
+        load: dict[str, int] = {a: 0 for a in available_agents}
+        for task in self.tasks:
+            if task.status == "running" and task.assignee in load:
+                load[task.assignee] += 1
+
+        pending = [t for t in self.tasks if t.status == "pending"]
+        reassigned = 0
+        skipped = 0
+        assignments: list[dict[str, str]] = []
+
+        for task in pending:
+            # Find least-loaded agent below cap
+            eligible = [a for a in available_agents if load[a] < max_per_agent]
+            if not eligible:
+                skipped += 1
+                continue
+            target = min(eligible, key=lambda a: load[a])
+            task.assignee = target
+            task.status = "running"
+            load[target] += 1
+            reassigned += 1
+            assignments.append({"task_id": task.id, "agent": target})
+            logger.info("rebalance_workers: task %s → %s", task.id, target)
+
+        result: dict[str, Any] = {
+            "reassigned": reassigned,
+            "skipped": skipped,
+            "assignments": assignments,
+        }
+        logger.info(
+            "rebalance_workers: %d reassigned, %d skipped (max_per_agent=%d)",
+            reassigned, skipped, max_per_agent,
+        )
+        return result
 
 
 class CoordinatorManager:

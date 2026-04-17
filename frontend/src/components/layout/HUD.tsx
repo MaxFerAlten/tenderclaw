@@ -14,7 +14,7 @@
 import { useState, useEffect } from "react";
 import { useSessionStore } from "../../stores/sessionStore";
 import { useNotificationStore } from "../../stores/notificationStore";
-import type { PipelineStageState } from "../../stores/sessionStore";
+import type { PipelineStageState, ToolCallStateItem } from "../../stores/sessionStore";
 import {
   Activity,
   Terminal,
@@ -34,6 +34,7 @@ import {
   Bell,
   Brain,
   BrainCircuit,
+  ShieldAlert,
 } from "lucide-react";
 
 const STAGE_META: Record<string, { label: string; icon: typeof Search }> = {
@@ -159,6 +160,27 @@ function ThinkingIndicator({ agentName, phase, progressPct, detail }: {
   );
 }
 
+function PendingConfirmList({ items }: { items: ToolCallStateItem[] }) {
+  if (items.length === 0) return null;
+  return (
+    <div className="flex flex-col gap-1 border-t border-zinc-800/50 pt-2">
+      <span className="text-[9px] text-amber-400 font-semibold uppercase tracking-widest mb-0.5 flex items-center gap-1">
+        <ShieldAlert className="w-3 h-3" /> Awaiting Confirm ({items.length})
+      </span>
+      {items.map((t) => (
+        <div
+          key={t.tool_use_id}
+          className="flex items-center gap-2 bg-amber-500/5 border border-amber-800/40 rounded-lg px-2 py-1.5 animate-pulse"
+        >
+          <ShieldAlert className="w-3 h-3 text-amber-400 shrink-0" />
+          <span className="font-mono text-[11px] text-amber-300 truncate">{t.tool_name}</span>
+          <span className="ml-auto text-[10px] text-zinc-600">{t.tool_use_id.slice(-4)}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function HUD() {
   const activeTools = useSessionStore((s) => s.activeTools);
   const status = useSessionStore((s) => s.status);
@@ -167,6 +189,7 @@ export function HUD() {
   const pipelineStages = useSessionStore((s) => s.pipelineStages);
   const turnCount = useSessionStore((s) => s.turnCount);
   const turnStartedAt = useSessionStore((s) => s.turnStartedAt);
+  const toolCallStates = useSessionStore((s) => s.toolCallStates);
 
   const thinking = useNotificationStore((s) => s.thinking);
   const unreadCount = useNotificationStore((s) => s.unreadCount);
@@ -176,7 +199,8 @@ export function HUD() {
   const [elapsed, setElapsed] = useState(0);
 
   const toolList = Array.from(activeTools.values()).slice(-5).reverse();
-  const hasActivity = toolList.length > 0 || status === "busy" || pipelineActive;
+  const pendingConfirm = Array.from(toolCallStates.values()).filter((t) => t.state === "requested");
+  const hasActivity = toolList.length > 0 || status === "busy" || pipelineActive || pendingConfirm.length > 0;
 
   useEffect(() => {
     if (status !== "busy" || !turnStartedAt) {
@@ -288,6 +312,9 @@ export function HUD() {
                 <PipelineTracker stages={pipelineStages} />
               </div>
             )}
+
+            {/* Pending permission confirmations */}
+            <PendingConfirmList items={pendingConfirm} />
 
             {/* Tool Execution List */}
             {toolList.length > 0 && (

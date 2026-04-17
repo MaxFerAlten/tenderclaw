@@ -1,6 +1,9 @@
 """WebSocket message schemas — the real-time protocol between frontend and backend.
 
 All messages use a discriminated union on the `type` field.
+
+Server-side events carry a `seq` (sequence number) so clients can detect
+dropped messages (a gap in seq means at least one event was lost).
 """
 
 from __future__ import annotations
@@ -10,6 +13,21 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from backend.schemas.messages import TokenUsage
+
+
+# ---------------------------------------------------------------------------
+# Sequence-number mixin — added to every server → client event
+# ---------------------------------------------------------------------------
+
+
+class WSSeqMixin(BaseModel):
+    """Mixin that adds a monotonic sequence number to server events.
+
+    The WS connection manager increments `seq` per session before sending.
+    Clients detect gaps (e.g. seq jumps from 5 to 7) as evidence of loss.
+    """
+
+    seq: int = 0
 
 
 # =============================================================================
@@ -66,7 +84,7 @@ WSClientMessage = WSUserMessage | WSToolPermissionResponse | WSAbort | WSSession
 # =============================================================================
 
 
-class WSAssistantText(BaseModel):
+class WSAssistantText(WSSeqMixin):
     """Streaming text delta from the assistant."""
 
     type: Literal["assistant_text"] = "assistant_text"
@@ -74,7 +92,7 @@ class WSAssistantText(BaseModel):
     message_id: str
 
 
-class WSAssistantThinking(BaseModel):
+class WSAssistantThinking(WSSeqMixin):
     """Streaming thinking delta from the assistant."""
 
     type: Literal["assistant_thinking"] = "assistant_thinking"
@@ -96,7 +114,7 @@ class WSMessageEnd(BaseModel):
     message_id: str
 
 
-class WSToolUseStart(BaseModel):
+class WSToolUseStart(WSSeqMixin):
     """A tool invocation is beginning."""
 
     type: Literal["tool_use_start"] = "tool_use_start"
@@ -105,7 +123,7 @@ class WSToolUseStart(BaseModel):
     message_id: str
 
 
-class WSToolResult(BaseModel):
+class WSToolResult(WSSeqMixin):
     """A tool has produced a result."""
 
     type: Literal["tool_result"] = "tool_result"
@@ -123,7 +141,7 @@ class WSToolProgress(BaseModel):
     data: str
 
 
-class WSPermissionRequest(BaseModel):
+class WSPermissionRequest(WSSeqMixin):
     """Server asks the user to approve a tool execution."""
 
     type: Literal["permission_request"] = "permission_request"
@@ -141,7 +159,7 @@ class WSError(BaseModel):
     code: str = "internal_error"
 
 
-class WSTurnStart(BaseModel):
+class WSTurnStart(WSSeqMixin):
     """An agent turn has begun."""
 
     type: Literal["turn_start"] = "turn_start"
@@ -149,7 +167,7 @@ class WSTurnStart(BaseModel):
     agent_name: str = "sisyphus"
 
 
-class WSTurnEnd(BaseModel):
+class WSTurnEnd(WSSeqMixin):
     """An agent turn is complete."""
 
     type: Literal["turn_end"] = "turn_end"
@@ -205,7 +223,7 @@ class WSNotification(BaseModel):
     auto_dismiss_ms: int = 5000
 
 
-class WSThinkingProgress(BaseModel):
+class WSThinkingProgress(WSSeqMixin):
     """Agent thinking progress for HUD visualization."""
 
     type: Literal["thinking_progress"] = "thinking_progress"
@@ -213,6 +231,22 @@ class WSThinkingProgress(BaseModel):
     phase: str  # analyzing, planning, reasoning, synthesizing
     progress_pct: int = 0
     detail: str = ""
+
+
+class WSToolCallStateUpdate(WSSeqMixin):
+    """Tool call state machine transition broadcast to the frontend.
+
+    Emitted by tool_runner whenever a tool transitions state so the
+    HUD/Canvas can reflect REQUESTED → APPROVED → RUNNING → COMPLETED/FAILED
+    without waiting for the final tool_result event.
+    """
+
+    type: Literal["tool_call_state"] = "tool_call_state"
+    tool_use_id: str
+    tool_name: str
+    state: str  # ToolCallState value: requested|approved|denied|running|completed|failed
+    is_error: bool = False
+    result_preview: str = ""  # first 200 chars of result, only for completed/failed
 
 
 WSServerMessage = (
@@ -233,4 +267,5 @@ WSServerMessage = (
     | WSUIUpdate
     | WSNotification
     | WSThinkingProgress
+    | WSToolCallStateUpdate
 )

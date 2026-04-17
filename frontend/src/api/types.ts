@@ -163,6 +163,15 @@ export interface WSThinkingProgress {
   detail: string;
 }
 
+export interface WSToolCallState {
+  type: "tool_call_state";
+  tool_use_id: string;
+  tool_name: string;
+  state: "requested" | "approved" | "denied" | "running" | "completed" | "failed";
+  is_error: boolean;
+  result_preview: string;
+}
+
 export type WSServerEvent =
   | WSAssistantText
   | WSAssistantThinking
@@ -180,7 +189,8 @@ export type WSServerEvent =
   | WSPipelineStage
   | WSUIUpdate
   | WSNotification
-  | WSThinkingProgress;
+  | WSThinkingProgress
+  | WSToolCallState;
 
 // === Tools ===
 

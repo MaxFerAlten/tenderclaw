@@ -11,13 +11,38 @@ import logging
 from typing import Any
 
 from backend.hooks.engine import hook_registry
+from backend.hooks.handlers.secret_scanner import (
+    secret_scanner_tool_after,
+    secret_scanner_assistant_after,
+)
 from backend.schemas.hooks import HookPoint, HookTier, HookAction, HookEvent, HookResult
 
 logger = logging.getLogger("tenderclaw.hooks.initializer")
 
 
 def bootstrap_hooks() -> None:
-    """Register all Wave 2 lifecycle hooks."""
+    """Register all Wave 2 lifecycle hooks.
+
+    Secret scanner hooks are registered with priority=-100 so they run
+    BEFORE all other TOOL_AFTER / MESSAGE_ASSISTANT_AFTER handlers.
+    """
+    # -----------------------------------------------------------------------
+    # SECRET SCANNER — must be first in the chain (priority = -100)
+    # -----------------------------------------------------------------------
+    hook_registry.register(
+        name="secret_scanner_tool_after",
+        point=HookPoint.TOOL_AFTER,
+        handler=secret_scanner_tool_after,
+        tier=HookTier.CONTINUATION,
+        priority=-100,
+    )
+    hook_registry.register(
+        name="secret_scanner_assistant_after",
+        point=HookPoint.MESSAGE_ASSISTANT_AFTER,
+        handler=secret_scanner_assistant_after,
+        tier=HookTier.CONTINUATION,
+        priority=-100,
+    )
     # --- Session hooks ---
     hook_registry.register(
         name="wave2_session_start",

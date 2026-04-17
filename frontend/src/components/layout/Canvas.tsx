@@ -12,15 +12,60 @@
 
 import { useState, useCallback } from "react";
 import { useSessionStore } from "../../stores/sessionStore";
-import { 
-  X, Code, FileText, Download, ChevronRight, 
-  PanelRightClose, PanelRight, Eye, Edit3, Trash2 
+import type { ToolCallStateItem } from "../../stores/sessionStore";
+import {
+  X, Code, FileText, Download, ChevronRight,
+  PanelRightClose, PanelRight, Eye, Edit3, Trash2,
+  CheckCircle2, XCircle, Loader2, Clock, ShieldCheck, ShieldAlert,
 } from "lucide-react";
 import { CodeBlock } from "../shared/CodeBlock";
+
+const STATE_META: Record<ToolCallStateItem["state"], { label: string; color: string; icon: typeof Clock }> = {
+  requested:  { label: "Waiting",   color: "text-amber-400",  icon: ShieldAlert },
+  approved:   { label: "Approved",  color: "text-sky-400",    icon: ShieldCheck },
+  denied:     { label: "Denied",    color: "text-rose-400",   icon: XCircle },
+  running:    { label: "Running",   color: "text-violet-400", icon: Loader2 },
+  completed:  { label: "Done",      color: "text-emerald-400",icon: CheckCircle2 },
+  failed:     { label: "Failed",    color: "text-rose-400",   icon: XCircle },
+};
+
+function ToolStatePanel({ items }: { items: ToolCallStateItem[] }) {
+  if (items.length === 0) return null;
+  // Show up to 8 most recent, sorted by updated_at desc
+  const sorted = [...items].sort((a, b) => b.updated_at - a.updated_at).slice(0, 8);
+  return (
+    <div className="flex flex-col gap-1 p-3 border-b border-zinc-800 bg-zinc-950/30">
+      <span className="text-[9px] text-zinc-500 font-semibold uppercase tracking-widest mb-1">
+        Tool Activity
+      </span>
+      {sorted.map((t) => {
+        const meta = STATE_META[t.state] ?? STATE_META.running;
+        const Icon = meta.icon;
+        const isSpinning = t.state === "running";
+        return (
+          <div
+            key={`${t.tool_use_id}-${t.state}`}
+            className="flex items-center gap-2 bg-zinc-900/60 border border-zinc-800/50 rounded-lg px-2 py-1 transition-all animate-in fade-in duration-300"
+          >
+            <Icon className={`w-3 h-3 shrink-0 ${meta.color} ${isSpinning ? "animate-spin" : ""}`} />
+            <span className="font-mono text-[11px] text-zinc-300 truncate flex-1">{t.tool_name}</span>
+            <span className={`text-[10px] font-medium ${meta.color}`}>{meta.label}</span>
+            {t.result_preview && (
+              <span className="text-[9px] text-zinc-600 italic truncate max-w-24" title={t.result_preview}>
+                {t.result_preview.slice(0, 24)}
+              </span>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 export function Canvas() {
   const artifacts = useSessionStore((s) => s.artifacts);
   const activeArtifactId = useSessionStore((s) => s.activeArtifactId);
+  const toolCallStates = useSessionStore((s) => s.toolCallStates);
   const set = useSessionStore.setState;
   
   const [isCollapsed, setIsCollapsed] = useState(false);
@@ -132,6 +177,9 @@ export function Canvas() {
           </div>
         )}
       </div>
+
+      {/* Tool state activity panel */}
+      <ToolStatePanel items={Array.from(toolCallStates.values())} />
 
       <div className="flex flex-1 overflow-hidden">
         {/* Sidebar - Artifact List */}

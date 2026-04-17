@@ -26,7 +26,7 @@ interface SettingsStore {
   resetKeys: () => Promise<void>;
 }
 
-const PROVIDER_IDS = ["anthropic", "openai", "google", "xai", "deepseek", "openrouter", "opencode"];
+const PROVIDER_IDS = ["anthropic", "openai", "google", "xai", "deepseek", "openrouter", "opencode", "ollama", "lmstudio", "llamacpp"];
 
 export const useSettingsStore = create<SettingsStore>((set, _get) => ({
   providerStatus: Object.fromEntries(

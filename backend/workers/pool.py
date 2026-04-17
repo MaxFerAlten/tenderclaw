@@ -54,6 +54,9 @@ class WorkerTask:
     error: str | None = None
     agent_name: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    # Canonical plan ID from PlanStore — set BEFORE worker bootstrap so the
+    # worker can always resolve its plan (OMX v0.8.9 fix).
+    canonical_task_id: str | None = None
 
     @property
     def elapsed(self) -> float | None:
@@ -71,6 +74,7 @@ class WorkerTask:
             "agent": self.agent_name,
             "elapsed": self.elapsed,
             "error": self.error,
+            "canonical_task_id": self.canonical_task_id,
         }
 
 
@@ -149,8 +153,14 @@ class WorkerPool:
         timeout: float | None = None,
         agent_name: str | None = None,
         metadata: dict[str, Any] | None = None,
+        canonical_task_id: str | None = None,
     ) -> WorkerTask:
-        """Submit a task to the pool. Blocks if queue is full (backpressure)."""
+        """Submit a task to the pool. Blocks if queue is full (backpressure).
+
+        Pass ``canonical_task_id`` when submitting a task whose plan was
+        pre-reserved via ``PlanStore.reserve_canonical_id()`` so the worker
+        carries the stable plan reference from the moment it enters the queue.
+        """
         task = WorkerTask(
             task_id=f"wt_{uuid.uuid4().hex[:10]}",
             name=name or f"task-{self._stats.total_submitted}",
@@ -159,6 +169,7 @@ class WorkerPool:
             timeout=timeout if timeout is not None else self._default_timeout,
             agent_name=agent_name,
             metadata=metadata or {},
+            canonical_task_id=canonical_task_id,
         )
         self._tasks[task.task_id] = task
         self._stats.total_submitted += 1
@@ -339,6 +350,56 @@ class WorkerPool:
             "peak_concurrency": self._stats.peak_concurrency,
             "current_running": len(self._running),
             "max_workers": self._max_workers,
+        }
+
+    def worker_health_check(self, task_id: str | None = None) -> dict[str, Any]:
+        """Return health metrics for the pool or a specific task.
+
+        When ``task_id`` is given, returns per-task health including whether it
+        is stalled (running longer than its timeout without completing).
+        When omitted, returns aggregate pool health.
+        """
+        if task_id is not None:
+            task = self._tasks.get(task_id)
+            if task is None:
+                return {"healthy": False, "reason": "task_not_found", "task_id": task_id}
+            stalled = False
+            stall_reason = None
+            if task.status == TaskStatus.RUNNING and task.timeout and task.timeout > 0:
+                elapsed = task.elapsed or 0
+                if elapsed > task.timeout * 1.1:  # 10 % grace window
+                    stalled = True
+                    stall_reason = f"running {elapsed:.1f}s vs timeout {task.timeout}s"
+            return {
+                "healthy": not stalled,
+                "task_id": task_id,
+                "status": task.status.value,
+                "elapsed": task.elapsed,
+                "stalled": stalled,
+                "stall_reason": stall_reason,
+                "canonical_task_id": task.canonical_task_id,
+                "agent": task.agent_name,
+            }
+
+        # Aggregate pool health
+        running_count = len(self._running)
+        stalled_tasks = []
+        for t in self._tasks.values():
+            if t.status == TaskStatus.RUNNING and t.timeout and t.timeout > 0:
+                elapsed = t.elapsed or 0
+                if elapsed > t.timeout * 1.1:
+                    stalled_tasks.append(t.task_id)
+
+        return {
+            "healthy": len(stalled_tasks) == 0,
+            "running": running_count,
+            "max_workers": self._max_workers,
+            "utilisation_pct": int(running_count / self._max_workers * 100) if self._max_workers else 0,
+            "stalled_tasks": stalled_tasks,
+            "queued": sum(1 for t in self._tasks.values() if t.status == TaskStatus.QUEUED),
+            "total_submitted": self._stats.total_submitted,
+            "total_completed": self._stats.total_completed,
+            "total_failed": self._stats.total_failed,
         }
 
     # --- Hooks ---

@@ -253,11 +253,70 @@ class PurgeErrorsStrategy:
         return result, stats
 
 
+@dataclass
+class CriticalTurnProtection:
+    """Protect CRITICAL turns from any pruning strategy.
+
+    A turn is CRITICAL if:
+    - It contains a failed tool result (`is_error=True`)
+    - Its content matches architectural decision keywords
+    - It is explicitly tagged as critical via `_critical` metadata marker
+
+    Protected turns are marked with `msg._critical = True` and skipped
+    by all downstream strategies.
+    """
+
+    enabled: bool = True
+    # Keywords that flag a turn as an architectural decision
+    arch_keywords: List[str] = field(default_factory=lambda: [
+        "decided", "decision", "architecture", "we chose", "tradeoff",
+        "won't change", "permanent", "critical", "CRITICAL",
+    ])
+
+    def mark_critical(self, messages: List[AgentMessage]) -> List[AgentMessage]:
+        """Tag messages that must not be pruned. Returns the same list (mutated)."""
+        if not self.enabled:
+            return messages
+
+        for msg in messages:
+            if getattr(msg, "_critical", False):
+                continue  # Already tagged
+
+            is_critical = False
+
+            # Failed tool results are always critical
+            if msg.role == MessageRole.TOOL_RESULT and msg.is_error:
+                is_critical = True
+
+            # Architectural decision keywords in content
+            if not is_critical:
+                content = msg.tool_result_content or msg.content or ""
+                content_lower = content.lower()
+                if any(kw.lower() in content_lower for kw in self.arch_keywords):
+                    is_critical = True
+
+            if is_critical:
+                object.__setattr__(msg, "_critical", True)  # type: ignore[arg-type]
+
+        return messages
+
+    def apply(self, messages: List[AgentMessage]) -> tuple[List[AgentMessage], Dict[str, Any]]:
+        """Mark critical turns. Does not remove messages itself."""
+        self.mark_critical(messages)
+        critical_count = sum(1 for m in messages if getattr(m, "_critical", False))
+        return messages, {"critical_marked": critical_count}
+
+
+def _is_critical(msg: AgentMessage) -> bool:
+    return getattr(msg, "_critical", False)
+
+
 def prune_with_strategies(
     messages: List[AgentMessage],
     deduplication: Optional[DeduplicationStrategy] = None,
     supersede_writes: Optional[SupersedeWritesStrategy] = None,
     purge_errors: Optional[PurgeErrorsStrategy] = None,
+    critical_protection: Optional[CriticalTurnProtection] = None,
 ) -> tuple[List[AgentMessage], Dict[str, Any]]:
     """Apply all enabled pruning strategies.
 
@@ -269,21 +328,42 @@ def prune_with_strategies(
         "strategies_applied": [],
     }
 
+    # --- 0. Mark CRITICAL turns before any pruning ---
+    protection = critical_protection or CriticalTurnProtection()
+    result, cp_stats = protection.apply(result)
+    stats["strategies_applied"].append("critical_protection")
+    stats["critical_protection"] = cp_stats
+
+    # Helper: wrap a strategy so it never removes critical messages
+    def _safe_apply(strategy, name: str) -> None:
+        nonlocal result
+        # Separate critical messages out, apply strategy to the rest, put them back
+        critical = [m for m in result if _is_critical(m)]
+        non_critical = [m for m in result if not _is_critical(m)]
+        pruned, s_stats = strategy.apply(non_critical)
+        # Merge: restore critical messages in their original relative positions
+        restored: List[AgentMessage] = []
+        ci = 0  # index into pruned (non-critical)
+        for m in result:  # walk original order to preserve positions
+            if _is_critical(m):
+                restored.append(m)
+            elif ci < len(pruned) and pruned[ci] is m:
+                restored.append(m)
+                ci += 1
+            # else: this non-critical message was pruned — skip it
+        result[:] = restored
+        stats["strategies_applied"].append(name)
+        stats[name] = s_stats
+
     # Apply in order: dedup -> supersede -> purge errors
     if deduplication and deduplication.enabled:
-        result, d_stats = deduplication.apply(result)
-        stats["strategies_applied"].append("deduplication")
-        stats["deduplication"] = d_stats
+        _safe_apply(deduplication, "deduplication")
 
     if supersede_writes and supersede_writes.enabled:
-        result, sw_stats = supersede_writes.apply(result)
-        stats["strategies_applied"].append("supersede_writes")
-        stats["supersede_writes"] = sw_stats
+        _safe_apply(supersede_writes, "supersede_writes")
 
     if purge_errors and purge_errors.enabled:
-        result, pe_stats = purge_errors.apply(result)
-        stats["strategies_applied"].append("purge_errors")
-        stats["purge_errors"] = pe_stats
+        _safe_apply(purge_errors, "purge_errors")
 
     stats["total_final"] = len(result)
     stats["removed_total"] = stats["total_original"] - stats["total_final"]

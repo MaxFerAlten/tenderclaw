@@ -143,6 +143,32 @@ class KeywordDetector:
             description="Show execution trace",
             skill="trace"
         ),
+        KeywordMapping(
+            keywords=[
+                "brainstorm", "brainstorming", "design first", "think first",
+                "before coding", "let's think", "let's design", "design this",
+                "spec", "specification", "architecture review",
+            ],
+            action="brainstorming",
+            description="Design-first workflow with HARD-GATE (no code before approved design)",
+            skill="brainstorming"
+        ),
+        KeywordMapping(
+            keywords=[
+                "writing-plan", "writing plan", "implementation plan",
+                "break it down", "decompose", "task list", "bite-sized",
+                "atomic tasks",
+            ],
+            action="writing-plans",
+            description="Bite-sized implementation plans with exact paths and complete code",
+            skill="writing-plans"
+        ),
+        KeywordMapping(
+            keywords=["ralplan", "consensus plan", "planner architect critic"],
+            action="ralplan",
+            description="Consensus planning (planner + architect + critic)",
+            skill=None
+        ),
     ]
 
     def __init__(self):

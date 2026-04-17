@@ -1,4 +1,9 @@
-"""Skills API — REST endpoints for skill discovery and execution."""
+"""Skills API — REST endpoints for skill discovery, execution, and auto-selection.
+
+Sprint 5 additions:
+- POST /select  — auto-select best skill for a task/phase/risk combination
+- GET  /trace   — return recent skill selection audit trail
+"""
 
 from __future__ import annotations
 
@@ -8,7 +13,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Any
 
-from backend.core.skills import list_available_skills, get_skill_by_name
+from backend.core.skills import list_available_skills, get_skill_by_name, skill_selector
 
 logger = logging.getLogger("tenderclaw.api.skills")
 
@@ -40,10 +45,98 @@ class SkillExecuteResponse(BaseModel):
     result: Any = None
 
 
+class SkillSelectRequest(BaseModel):
+    task: str
+    phase: str = ""
+    risk: str = "medium"
+    limit: int = 1  # 1 = best match only; >1 = ranked list
+
+
+class SkillSelectMatch(BaseModel):
+    skill_name: str
+    confidence: float
+    reason: str
+    phase: str
+    risk: str
+    matched: bool
+
+
+class SkillSelectResponse(BaseModel):
+    matches: list[SkillSelectMatch]
+    task_snippet: str
+
+
+class SkillTraceItem(BaseModel):
+    timestamp: str
+    task_snippet: str
+    phase: str
+    risk: str
+    skill_name: str
+    confidence: float
+    reason: str
+
+
 @router.get("", response_model=list[SkillInfo])
 async def list_skills() -> list[dict[str, Any]]:
     """Return all available skills."""
     return list_available_skills()
+
+
+@router.post("/select", response_model=SkillSelectResponse)
+async def select_skill(body: SkillSelectRequest) -> dict[str, Any]:
+    """Auto-select the best skill(s) for a task, phase, and risk level.
+
+    Returns a ranked list of :class:`SkillSelectMatch` objects.
+    Set ``limit=1`` (default) for best match only.
+    """
+    if body.limit > 1:
+        raw_matches = skill_selector.select_many(
+            body.task, phase=body.phase, risk=body.risk, limit=body.limit
+        )
+        matches = [
+            SkillSelectMatch(
+                skill_name=m.skill_name,
+                confidence=m.confidence,
+                reason=m.reason,
+                phase=m.phase,
+                risk=m.risk,
+                matched=m.matched,
+            )
+            for m in raw_matches
+        ]
+    else:
+        m = skill_selector.select(body.task, phase=body.phase, risk=body.risk)
+        matches = [SkillSelectMatch(
+            skill_name=m.skill_name,
+            confidence=m.confidence,
+            reason=m.reason,
+            phase=m.phase,
+            risk=m.risk,
+            matched=m.matched,
+        )]
+
+    return {
+        "matches": matches,
+        "task_snippet": body.task[:120],
+    }
+
+
+@router.get("/trace", response_model=list[SkillTraceItem])
+async def get_skill_trace(limit: int = 20) -> list[dict[str, Any]]:
+    """Return recent skill selection audit trail (newest first)."""
+    entries = skill_selector.get_trace(limit=min(limit, 200))
+    return [
+        {
+            "timestamp": e.timestamp.isoformat(),
+            "task_snippet": e.task_snippet,
+            "phase": e.phase,
+            "risk": e.risk,
+            "skill_name": e.skill_name,
+            "confidence": e.confidence,
+            "reason": e.reason,
+        }
+        for e in entries
+    ]
 
 
 @router.get("/{name}", response_model=SkillDetail)

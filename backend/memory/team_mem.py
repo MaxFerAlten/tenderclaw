@@ -1,11 +1,20 @@
-"""Team Memory — team memory paths and prompts for collaborative contexts."""
+"""Team Memory — team memory paths and prompts for collaborative contexts.
+
+Team memory is strictly scoped to MemoryScope.TEAM. It must never contain
+user-personal preferences (those go to MemoryScope.USER) or ephemeral session
+data (MemoryScope.SESSION).
+"""
 
 from __future__ import annotations
 
 import logging
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+from backend.memory.memory_types import MemoryEntry, MemoryMetadata, MemoryScope, MemoryType
+from backend.memory.keyword_extractor import extract_keywords
 
 logger = logging.getLogger("tenderclaw.memory.team")
 
@@ -125,6 +134,39 @@ def scan_team_memory_sections(content: str) -> dict[str, list[str]]:
         sections[current_section] = current_items
 
     return sections
+
+
+def list_team_memory_entries(project_root: str | Path = ".") -> list[MemoryEntry]:
+    """Parse team memory files and return structured MemoryEntry list (scope=TEAM).
+
+    Entries produced here are guaranteed to carry scope=TEAM so they cannot
+    contaminate user or repo scopes.
+    """
+    content = read_team_memory(project_root)
+    if not content:
+        return []
+
+    entries: list[MemoryEntry] = []
+    sections = scan_team_memory_sections(content)
+    for section_name, items in sections.items():
+        for item in items:
+            if len(item) < 10:
+                continue
+            keywords = extract_keywords(item, top_n=8)
+            entry = MemoryEntry(
+                id=f"team_{uuid.uuid4().hex[:8]}",
+                type=MemoryType.PROJECT,
+                scope=MemoryScope.TEAM,
+                title=item[:60] + ("..." if len(item) > 60 else ""),
+                content=item,
+                keywords=keywords,
+                metadata=MemoryMetadata(
+                    tags=["team", section_name.lower()[:20]],
+                ),
+            )
+            entries.append(entry)
+    logger.debug("Loaded %d team memory entries from %s", len(entries), project_root)
+    return entries
 
 
 def create_team_memory_template() -> str:

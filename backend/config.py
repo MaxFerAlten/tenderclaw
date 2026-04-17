@@ -42,6 +42,12 @@ class Settings(BaseSettings):
     # LM Studio
     lmstudio_base_url: str = "http://localhost:1234/v1"
 
+    # llama.cpp
+    llamacpp_base_url: str = "http://localhost:3080/v1"
+
+    # gpt4free
+    gpt4free_base_url: str = "http://localhost:1337/v1"
+
     # Channel integrations
     telegram_bot_token: str = Field(default="", alias="TELEGRAM_BOT_TOKEN")
     discord_token: str = Field(default="", alias="DISCORD_BOT_TOKEN")

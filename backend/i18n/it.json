@@ -1,0 +1,44 @@
+{
+  "intent.research": "Modalità ricerca: comprensione o ricerca di informazioni.",
+  "intent.implement": "Modalità implementazione: scrittura o modifica del codice.",
+  "intent.fix": "Modalità correzione: debug o riparazione di un bug.",
+  "intent.plan": "Modalità pianificazione: progettazione di una funzionalità o architettura.",
+  "intent.review": "Modalità revisione: audit o critica del codice esistente.",
+  "intent.chat": "Modalità chat: conversazione generale.",
+
+  "skill.selected": "Skill selezionata: {skill_name} (confidenza: {confidence:.0%})",
+  "skill.none": "Nessuna skill trovata per questo task.",
+  "skill.ralplan": "Pianificazione consensuale: triade Planner + Architect + Critic.",
+  "skill.tdd": "Workflow Test-Driven Development.",
+  "skill.autopilot": "Pipeline di esecuzione autonoma end-to-end.",
+  "skill.brainstorming": "Workflow design-first con hard gate prima della scrittura del codice.",
+  "skill.deepsearch": "Ricerca approfondita nel codebase.",
+  "skill.security": "Audit di sicurezza e revisione delle vulnerabilità.",
+
+  "hook.bail": "Catena hook interrotta da: {name}",
+  "hook.modify": "Hook {name} ha modificato i dati dell'evento ({strategy}).",
+  "hook.error": "Hook {name} ha generato un errore: {error}",
+
+  "session.start": "Sessione avviata.",
+  "session.end": "Sessione terminata.",
+  "session.compact": "Contesto compattato.",
+
+  "tool.before": "Esecuzione tool: {tool_name}",
+  "tool.after": "Tool completato: {tool_name}",
+  "tool.error": "Errore nel tool {tool_name}: {error}",
+
+  "error.intent_classification": "Classificazione intent fallita, utilizzo implement come predefinito.",
+  "error.skill_selection": "Errore nella selezione della skill: {error}",
+  "error.no_api_key": "Nessuna chiave API configurata. Modalità solo locale attiva.",
+
+  "cache.hit": "Cache intent: {intent} (confidenza {confidence:.0%})",
+  "cache.miss": "Cache miss per la sessione {session_id}.",
+
+  "worker.submit": "Task inviato al pool di worker.",
+  "worker.stalled": "Worker task bloccato: {task_id}",
+  "worker.health": "Stato pool: {running} in esecuzione, {utilisation:.0%} utilizzo.",
+
+  "plan.reserved": "ID piano riservato: {plan_id}",
+  "plan.created": "Piano creato: {plan_id}",
+  "plan.completed": "Piano completato: {plan_id}"
+}

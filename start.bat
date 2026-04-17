@@ -3,6 +3,12 @@ setlocal
 
 if "%1"=="stop" goto :stop
 
+:: Auto-release port 7000 if already in use
+for /f "tokens=5" %%p in ('netstat -ano ^| findstr ":7000 " ^| findstr "LISTENING"') do (
+    echo [TenderClaw] Releasing port 7000 ^(PID %%p^)...
+    taskkill /PID %%p /F >nul 2>&1
+)
+
 echo [TenderClaw] Building frontend...
 cd frontend
 call npm install --silent

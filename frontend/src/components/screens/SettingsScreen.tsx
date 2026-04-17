@@ -21,6 +21,8 @@ const PROVIDERS = [
   { id: "opencode", name: "OpenCode", color: "bg-red-500" },
   { id: "ollama", name: "Ollama (Local)", color: "bg-gray-500" },
   { id: "lmstudio", name: "LM Studio (Local)", color: "bg-amber-600" },
+  { id: "llamacpp", name: "llama.cpp (Local)", color: "bg-teal-500" },
+  { id: "gpt4free", name: "gpt4free (Free)", color: "bg-pink-500" },
 ];
 
 const POPULAR_MODELS = [
@@ -60,6 +62,7 @@ export function SettingsScreen() {
 
   const [apiKeys, setApiKeys] = useState<Record<string, string>>({
     anthropic: "", openai: "", google: "", xai: "", deepseek: "", openrouter: "", opencode: "",
+    ollama: "", lmstudio: "", llamacpp: "",
   });
   const [selectedProvider, setSelectedProvider] = useState("anthropic");
   const [selectedModel, setSelectedModel] = useState(model || "claude-sonnet-4-20250514");
@@ -67,6 +70,8 @@ export function SettingsScreen() {
   const [error, setError] = useState("");
   const [connectionStatus, setConnectionStatus] = useState<Record<string, "unknown" | "checking" | "ok" | "error">>({});
   const [lmstudioModels, setLmstudioModels] = useState<string[]>([]);
+  const [llamacppModels, setLlamacppModels] = useState<string[]>([]);
+  const [gpt4freeModels, setGpt4freeModels] = useState<string[]>([]);
   const [openrouterModels, setOpenrouterModels] = useState<string[]>([]);
   const [opencodeModels, setOpencodeModels] = useState<string[]>([]);
   const [customModelInput, setCustomModelInput] = useState("");
@@ -89,8 +94,10 @@ export function SettingsScreen() {
         ?? (savedModel.includes("/") ? "openrouter" : "anthropic");
       setSelectedProvider(provider);
       if (provider === "lmstudio") fetchLmstudioModels();
+      if (provider === "llamacpp") fetchLlamacppModels();
       if (provider === "openrouter") fetchOpenrouterModels();
       if (provider === "opencode") fetchOpencodeModels();
+      if (provider === "gpt4free") fetchGpt4freeModels();
     }
     loadStatus();
     costApi.getHistory()
@@ -103,6 +110,41 @@ export function SettingsScreen() {
     setContext("Settings");
     return () => setContext("Chat");
   }, [setContext]);
+
+  // Hydrate settings from the backend's /api/config — the server is the source
+  // of truth for `selected_provider` and local base URLs after a reload. We
+  // only overwrite fields the server knows about, leaving cloud API keys
+  // (which live in localStorage) untouched.
+  useEffect(() => {
+    const url = sessionId
+      ? `/api/config?session_id=${encodeURIComponent(sessionId)}`
+      : "/api/config";
+    fetch(url)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((cfg) => {
+        if (!cfg) return;
+        if (cfg.selected_provider) {
+          setSelectedProvider(cfg.selected_provider);
+          // Kick off model list fetches for providers that load dynamically.
+          if (cfg.selected_provider === "lmstudio") fetchLmstudioModels(cfg.lmstudio_base_url || undefined);
+          else if (cfg.selected_provider === "llamacpp") fetchLlamacppModels(cfg.llamacpp_base_url || undefined);
+          else if (cfg.selected_provider === "gpt4free") fetchGpt4freeModels(cfg.gpt4free_base_url || undefined);
+          else if (cfg.selected_provider === "openrouter") fetchOpenrouterModels();
+          else if (cfg.selected_provider === "opencode") fetchOpencodeModels();
+        }
+        // Merge local base URLs into the `apiKeys` record used by the form.
+        // Only fill fields that are currently empty — user edits win.
+        setApiKeys((prev) => ({
+          ...prev,
+          ollama: prev.ollama || cfg.ollama_base_url || "",
+          lmstudio: prev.lmstudio || cfg.lmstudio_base_url || "",
+          llamacpp: prev.llamacpp || cfg.llamacpp_base_url || "",
+          gpt4free: prev.gpt4free || cfg.gpt4free_base_url || "",
+        }));
+      })
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId]);
 
   const fetchLmstudioModels = async (baseUrl?: string) => {
     const params = baseUrl ? `?base_url=${encodeURIComponent(baseUrl)}` : "";
@@ -134,6 +176,30 @@ export function SettingsScreen() {
         setOpencodeModels(ids);
       }
     } catch { setOpencodeModels([]); }
+  };
+
+  const fetchGpt4freeModels = async (baseUrl?: string) => {
+    const params = baseUrl ? `?base_url=${encodeURIComponent(baseUrl)}` : "";
+    try {
+      const res = await fetch(`/api/diagnostics/gpt4free/models${params}`);
+      if (res.ok) {
+        const ids: string[] = await res.json();
+        setGpt4freeModels(ids);
+        if (ids.length > 0 && !ids.includes(selectedModel)) setSelectedModel(ids[0]);
+      }
+    } catch { setGpt4freeModels([]); }
+  };
+
+  const fetchLlamacppModels = async (baseUrl?: string) => {
+    const params = baseUrl ? `?base_url=${encodeURIComponent(baseUrl)}` : "";
+    try {
+      const res = await fetch(`/api/diagnostics/llamacpp/models${params}`);
+      if (res.ok) {
+        const ids: string[] = await res.json();
+        setLlamacppModels(ids);
+        if (ids.length > 0 && !ids.includes(selectedModel)) setSelectedModel(ids[0]);
+      }
+    } catch { setLlamacppModels([]); }
   };
 
   const handleTestCloudProvider = async (providerId: string) => {
@@ -179,6 +245,8 @@ export function SettingsScreen() {
           session_id: sessionId ?? undefined,
           ollama_base_url: apiKeys.ollama || undefined,
           lmstudio_base_url: apiKeys.lmstudio || undefined,
+          llamacpp_base_url: apiKeys.llamacpp || undefined,
+          gpt4free_base_url: apiKeys.gpt4free || undefined,
           anthropic_api_key: apiKeys.anthropic || undefined,
           openai_api_key: apiKeys.openai || undefined,
           google_api_key: apiKeys.google || undefined,
@@ -186,6 +254,7 @@ export function SettingsScreen() {
           deepseek_api_key: apiKeys.deepseek || undefined,
           openrouter_api_key: apiKeys.openrouter || undefined,
           opencode_api_key: apiKeys.opencode || undefined,
+          selected_provider: selectedProvider,
         }),
       });
       setSaved(true);
@@ -205,7 +274,7 @@ export function SettingsScreen() {
 
   const filteredModels = POPULAR_MODELS.filter((m) => m.provider === selectedProvider);
   const cloudProviders = PROVIDERS.filter((p) => p.id !== "ollama" && p.id !== "lmstudio");
-  const localProviders = PROVIDERS.filter((p) => p.id === "ollama" || p.id === "lmstudio");
+  const localProviders = PROVIDERS.filter((p) => p.id === "ollama" || p.id === "lmstudio" || p.id === "llamacpp" || p.id === "gpt4free");
 
   return (
     <div className="h-screen bg-zinc-950 text-zinc-100 overflow-y-auto">
@@ -240,8 +309,10 @@ export function SettingsScreen() {
                   onClick={() => {
                     setSelectedProvider(p.id);
                     if (p.id === "lmstudio") fetchLmstudioModels();
+                    else if (p.id === "llamacpp") fetchLlamacppModels();
                     else if (p.id === "openrouter") fetchOpenrouterModels();
                     else if (p.id === "opencode") fetchOpencodeModels();
+                    else if (p.id === "gpt4free") fetchGpt4freeModels();
                     else {
                       const first = POPULAR_MODELS.find((m) => m.provider === p.id);
                       if (first) setSelectedModel(first.id);
@@ -302,6 +373,26 @@ export function SettingsScreen() {
               ) : (
                 <p className="text-sm text-zinc-500 py-2">
                   No models loaded — test the connection below or enter a model ID manually.
+                </p>
+              )
+            ) : selectedProvider === "llamacpp" ? (
+              llamacppModels.length > 0 ? (
+                llamacppModels.map((id) => (
+                  <ModelButton key={id} id={id} label={id} selected={selectedModel === id} onClick={() => setSelectedModel(id)} />
+                ))
+              ) : (
+                <p className="text-sm text-zinc-500 py-2">
+                  No models loaded — test the connection below or enter a model ID manually.
+                </p>
+              )
+            ) : selectedProvider === "gpt4free" ? (
+              gpt4freeModels.length > 0 ? (
+                gpt4freeModels.map((id) => (
+                  <ModelButton key={id} id={id} label={id} selected={selectedModel === id} onClick={() => setSelectedModel(id)} />
+                ))
+              ) : (
+                <p className="text-sm text-zinc-500 py-2">
+                  No models loaded — start gpt4free at http://localhost:1337 and test the connection.
                 </p>
               )
             ) : (
@@ -395,13 +486,13 @@ export function SettingsScreen() {
                   type="text"
                   value={apiKeys[p.id] || ""}
                   onChange={(e) => setApiKeys({ ...apiKeys, [p.id]: e.target.value })}
-                  placeholder={p.id === "ollama" ? "http://localhost:11434" : "http://localhost:1234"}
+                  placeholder={p.id === "ollama" ? "http://localhost:11434" : p.id === "lmstudio" ? "http://localhost:1234" : p.id === "gpt4free" ? "http://localhost:1337" : "http://localhost:3080"}
                   className="w-full px-4 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-sm font-mono focus:outline-none focus:border-blue-500"
                 />
                 <div className="flex items-center gap-2">
                   <button
                     onClick={async () => {
-                      const url = apiKeys[p.id] || (p.id === "ollama" ? "http://localhost:11434" : "http://localhost:1234");
+                      const url = apiKeys[p.id] || (p.id === "ollama" ? "http://localhost:11434" : p.id === "lmstudio" ? "http://localhost:1234" : p.id === "gpt4free" ? "http://localhost:1337" : "http://localhost:3080");
                       setConnectionStatus({ ...connectionStatus, [p.id]: "checking" });
                       try {
                         const endpoint = p.id === "lmstudio"
@@ -412,6 +503,8 @@ export function SettingsScreen() {
                         if (res.ok && data.status === "ok") {
                           setConnectionStatus({ ...connectionStatus, [p.id]: "ok" });
                           if (p.id === "lmstudio") fetchLmstudioModels(url);
+                          else if (p.id === "gpt4free") fetchGpt4freeModels(url);
+                          else if (p.id === "llamacpp") fetchLlamacppModels(url);
                         } else {
                           setConnectionStatus({ ...connectionStatus, [p.id]: "error" });
                         }

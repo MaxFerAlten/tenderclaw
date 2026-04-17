@@ -1,0 +1,44 @@
+{
+  "intent.research": "Research mode: understanding or searching for information.",
+  "intent.implement": "Implement mode: writing or modifying code.",
+  "intent.fix": "Fix mode: debugging or repairing a bug.",
+  "intent.plan": "Plan mode: designing a new feature or architecture.",
+  "intent.review": "Review mode: auditing or critiquing existing code.",
+  "intent.chat": "Chat mode: general conversation.",
+
+  "skill.selected": "Skill selected: {skill_name} (confidence: {confidence:.0%})",
+  "skill.none": "No matching skill found for this task.",
+  "skill.ralplan": "Consensus planning: Planner + Architect + Critic triad.",
+  "skill.tdd": "Test-Driven Development workflow.",
+  "skill.autopilot": "Autonomous end-to-end execution pipeline.",
+  "skill.brainstorming": "Design-first workflow with hard gate before coding.",
+  "skill.deepsearch": "Thorough codebase search and analysis.",
+  "skill.security": "Security audit and vulnerability review.",
+
+  "hook.bail": "Hook chain stopped by: {name}",
+  "hook.modify": "Hook {name} modified event data ({strategy}).",
+  "hook.error": "Hook {name} raised an error: {error}",
+
+  "session.start": "Session started.",
+  "session.end": "Session ended.",
+  "session.compact": "Context compacted.",
+
+  "tool.before": "Running tool: {tool_name}",
+  "tool.after": "Tool completed: {tool_name}",
+  "tool.error": "Tool error in {tool_name}: {error}",
+
+  "error.intent_classification": "Intent classification failed, defaulting to implement.",
+  "error.skill_selection": "Skill selection error: {error}",
+  "error.no_api_key": "No API key configured. Running in local-only mode.",
+
+  "cache.hit": "Intent cache hit: {intent} (confidence {confidence:.0%})",
+  "cache.miss": "Intent cache miss for session {session_id}.",
+
+  "worker.submit": "Task submitted to worker pool.",
+  "worker.stalled": "Worker task stalled: {task_id}",
+  "worker.health": "Pool health: {running} running, {utilisation:.0%} utilisation.",
+
+  "plan.reserved": "Plan ID reserved: {plan_id}",
+  "plan.created": "Plan created: {plan_id}",
+  "plan.completed": "Plan completed: {plan_id}"
+}

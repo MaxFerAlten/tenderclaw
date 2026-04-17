@@ -19,6 +19,15 @@ class MemoryType(str, Enum):
     REFERENCE = "reference"
 
 
+class MemoryScope(str, Enum):
+    """Scope namespace for memory entries — controls isolation and search boundaries."""
+
+    USER = "user"      # personal preferences, cross-repo
+    REPO = "repo"      # per-repository facts and decisions
+    TEAM = "team"      # shared team knowledge, per-repo
+    SESSION = "session"  # ephemeral within a single session
+
+
 class MemoryMetadata(BaseModel):
     """Metadata for a memory entry."""
 
@@ -38,6 +47,7 @@ class MemoryEntry(BaseModel):
 
     id: str
     type: MemoryType
+    scope: MemoryScope = MemoryScope.SESSION
     title: str
     content: str
     keywords: list[str] = Field(default_factory=list)
@@ -89,11 +99,42 @@ class MemoryIndex(BaseModel):
         """Get all entries with a specific tag."""
         return [e for e in self.entries.values() if tag in e.metadata.tags]
 
+    def get_by_scope(self, scope: MemoryScope) -> list[MemoryEntry]:
+        """Get all entries for a specific scope."""
+        return [e for e in self.entries.values() if e.scope == scope]
+
     def search(self, query: str, keywords: list[str] | None = None) -> list[MemoryEntry]:
         """Search entries by query string and optional keywords."""
         query_lower = query.lower()
         results = []
         for entry in self.entries.values():
+            score = 0.0
+            if query_lower in entry.title.lower():
+                score += 2.0
+            if query_lower in entry.content.lower():
+                score += 1.0
+            if keywords:
+                for kw in keywords:
+                    if kw.lower() in entry.keywords:
+                        score += 0.5
+                    if kw.lower() in entry.content.lower():
+                        score += 0.3
+            if score > 0:
+                entry.relevance_score = score
+                results.append(entry)
+        return sorted(results, key=lambda e: e.relevance_score, reverse=True)
+
+    def search_by_scope(
+        self,
+        query: str,
+        scope: MemoryScope | None = None,
+        keywords: list[str] | None = None,
+    ) -> list[MemoryEntry]:
+        """Search entries filtered to a specific scope (or all scopes if None)."""
+        candidates = self.get_by_scope(scope) if scope else list(self.entries.values())
+        query_lower = query.lower()
+        results = []
+        for entry in candidates:
             score = 0.0
             if query_lower in entry.title.lower():
                 score += 2.0

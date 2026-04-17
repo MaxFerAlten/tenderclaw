@@ -64,11 +64,13 @@ class ConfigManager:
         self._sources: List[ConfigSource] = []
         self._loaded: bool = False
 
-    def load(self, force: bool = False) -> TenderClawConfig:
+    def load(self, force: bool = False, project_root: Optional[str] = None) -> TenderClawConfig:
         """Load configuration from all sources.
 
         Args:
             force: Force reload even if already loaded
+            project_root: Optional path to the active project. When provided, any
+                .tenderclaw/config.jsonc inside it is merged with highest file priority.
 
         Returns:
             Validated TenderClawConfig instance
@@ -84,7 +86,8 @@ class ConfigManager:
             config_data.update(default_config)
             sources.append(ConfigSource(name="default", data=default_config))
 
-        file_config = self._load_config_files()
+        repo_root = Path(project_root) if project_root else None
+        file_config = self._load_config_files(project_root=repo_root)
         if file_config:
             config_data = merge_jsonc(config_data, file_config)
             sources.append(ConfigSource(name="file", data=file_config))
@@ -118,14 +121,17 @@ class ConfigManager:
                 logger.warning("Failed to load default config: %s", e)
         return {}
 
-    def _load_config_files(self) -> Dict[str, Any]:
-        """Load configuration from user and project files."""
+    def _load_config_files(self, project_root: Optional[Path] = None) -> Dict[str, Any]:
+        """Load configuration from user and project files.
+
+        If project_root is provided, also loads the per-repo config from
+        <project_root>/.tenderclaw/config.jsonc (highest file-level priority).
+        """
         config_data: Dict[str, Any] = {}
 
         for path in CONFIG_SEARCH_PATHS:
             if not path.exists():
                 continue
-
             try:
                 file_data = self._load_file(path)
                 if file_data:
@@ -133,6 +139,25 @@ class ConfigManager:
                     logger.debug("Loaded config from %s", path)
             except Exception as e:
                 logger.warning("Failed to load config from %s: %s", path, e)
+
+        # Per-repo config — applied last so it overrides global/user config
+        if project_root:
+            repo_paths = [
+                Path(project_root) / ".tenderclaw" / "config.jsonc",
+                Path(project_root) / ".tenderclaw" / "config.json",
+                Path(project_root) / ".tenderclaw" / "config.yaml",
+                Path(project_root) / ".tenderclaw" / "config.yml",
+            ]
+            for path in repo_paths:
+                if path.exists():
+                    try:
+                        repo_data = self._load_file(path)
+                        if repo_data:
+                            config_data = merge_jsonc(config_data, repo_data)
+                            logger.info("Loaded per-repo config from %s", path)
+                    except Exception as e:
+                        logger.warning("Failed to load per-repo config from %s: %s", path, e)
+                    break  # First match wins
 
         return config_data
 
@@ -195,11 +220,39 @@ class ConfigManager:
             return self.load()
         return self._config
 
-    def reload(self) -> TenderClawConfig:
+    def reload(self, project_root: Optional[str] = None) -> TenderClawConfig:
         """Force reload configuration from all sources."""
         self._loaded = False
         self._config = None
-        return self.load(force=True)
+        return self.load(force=True, project_root=project_root)
+
+    @classmethod
+    def load_for_repo(cls, project_root: str) -> TenderClawConfig:
+        """Create a fresh ConfigManager and load config for a specific repo.
+
+        Useful when multiple repos are active simultaneously or in tests.
+        """
+        mgr = cls()
+        return mgr.load(project_root=project_root)
+
+    @staticmethod
+    def get_repo_memory_config(project_root: str) -> Dict[str, Any]:
+        """Read the memory-related section from a repo's .tenderclaw/config.jsonc.
+
+        Returns an empty dict if the file does not exist or has no memory section.
+        """
+        candidates = [
+            Path(project_root) / ".tenderclaw" / "config.jsonc",
+            Path(project_root) / ".tenderclaw" / "config.json",
+        ]
+        for path in candidates:
+            if path.exists():
+                try:
+                    data = load_jsonc(path) if path.suffix == ".jsonc" else json.loads(path.read_text())
+                    return data.get("memory", {})
+                except Exception as exc:
+                    logger.warning("Failed to read repo memory config from %s: %s", path, exc)
+        return {}
 
     def update_runtime(self, updates: Dict[str, Any]) -> TenderClawConfig:
         """Update configuration at runtime (does not persist to disk).

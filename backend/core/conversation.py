@@ -113,10 +113,13 @@ async def _run_conversation_turn_impl(
     add_span_attributes({"intent": intent})
 
     # Only auto-route to the team pipeline for Anthropic-backed models.
-    # OpenCode / Ollama / other providers run the standard agentic loop —
-    # the team pipeline uses Anthropic sub-agents internally.
-    from backend.services.model_router import detect_provider
-    _provider = await detect_provider(session.model)
+    # OpenCode / Ollama / gpt4free / other providers run the standard agentic
+    # loop — the team pipeline uses Anthropic sub-agents internally.
+    # Honour the user's explicit provider selection: e.g. a user running
+    # claude-3-5-sonnet through gpt4free should NOT trigger the team pipeline.
+    from backend.services.model_router import resolve_provider
+
+    _provider = await resolve_provider(session.model, session.model_config)
     _anthropic_native = _provider == "anthropic"
     if _anthropic_native and intent == "implement" and len(user_content) > 100:
         await _run_team_pipeline(session, user_content, send)
@@ -198,6 +201,7 @@ async def _agentic_loop_impl(session: SessionData, send: SendFn, parent_span) ->
     skill_append = ""
     try:
         from backend.core.skills import match_trigger
+
         matched = match_trigger(user_content)
         if matched:
             skill = matched[0]
@@ -250,15 +254,17 @@ async def _agentic_loop_impl(session: SessionData, send: SendFn, parent_span) ->
                 session_id=session.session_id,
                 auto_dismiss_ms=3000,
             )
-            await send(WSNotification(
-                id=notif.id,
-                level=notif.level.value,
-                category=notif.category.value,
-                title=notif.title,
-                body=notif.body,
-                agent_name=notif.agent_name,
-                auto_dismiss_ms=notif.auto_dismiss_ms,
-            ).model_dump())
+            await send(
+                WSNotification(
+                    id=notif.id,
+                    level=notif.level.value,
+                    category=notif.category.value,
+                    title=notif.title,
+                    body=notif.body,
+                    agent_name=notif.agent_name,
+                    auto_dismiss_ms=notif.auto_dismiss_ms,
+                ).model_dump()
+            )
 
         collector = StreamCollector(message_id=message_id, send=send)
 
@@ -414,16 +420,35 @@ async def _run_team_pipeline(session: SessionData, task: str, send: SendFn) -> N
 
 
 async def _validate_api_key(session: SessionData, send: SendFn) -> bool:
-    from backend.api.config import get_session_api_key, get_session_ollama_url, get_session_lmstudio_url
-    from backend.services.model_router import detect_provider
+    from backend.api.config import (
+        get_session_api_key,
+        get_session_ollama_url,
+        get_session_lmstudio_url,
+        get_session_llamacpp_url,
+        get_session_gpt4free_url,
+        _global_config,
+    )
+    from backend.services.model_router import resolve_provider
 
-    provider = await detect_provider(session.model)
+    # Build an effective config so resolve_provider can honour `selected_provider`
+    # both at session and global level (the global dict is the fallback used
+    # when the session hasn't explicitly stored one yet).
+    _effective_cfg = dict(session.model_config)
+    if not _effective_cfg.get("selected_provider") and _global_config.get("selected_provider"):
+        _effective_cfg["selected_provider"] = _global_config["selected_provider"]
 
-    if provider == "ollama":
-        session.model_config.setdefault("ollama_url", get_session_ollama_url(session.session_id))
-        return True
-    if provider == "lmstudio":
-        session.model_config.setdefault("lmstudio_url", get_session_lmstudio_url(session.session_id))
+    provider = await resolve_provider(session.model, _effective_cfg)
+
+    _KEYLESS_PROVIDERS = {"ollama", "lmstudio", "llamacpp", "gpt4free"}
+    if provider in _KEYLESS_PROVIDERS:
+        if provider == "ollama":
+            session.model_config.setdefault("ollama_url", get_session_ollama_url(session.session_id))
+        elif provider == "lmstudio":
+            session.model_config.setdefault("lmstudio_url", get_session_lmstudio_url(session.session_id))
+        elif provider == "llamacpp":
+            session.model_config.setdefault("llamacpp_url", get_session_llamacpp_url(session.session_id))
+        elif provider == "gpt4free":
+            session.model_config.setdefault("gpt4free_url", get_session_gpt4free_url(session.session_id))
         return True
 
     # deepseek routes through openrouter

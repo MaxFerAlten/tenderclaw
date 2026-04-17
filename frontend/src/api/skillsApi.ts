@@ -27,6 +27,37 @@ export interface SkillExecuteResponse {
   result?: unknown;
 }
 
+export interface SkillSelectRequest {
+  task: string;
+  phase?: string;
+  risk?: string;
+  limit?: number;
+}
+
+export interface SkillSelectMatch {
+  skill_name: string;
+  confidence: number;
+  reason: string;
+  phase: string;
+  risk: string;
+  matched: boolean;
+}
+
+export interface SkillSelectResponse {
+  matches: SkillSelectMatch[];
+  task_snippet: string;
+}
+
+export interface SkillTraceItem {
+  timestamp: string;
+  task_snippet: string;
+  phase: string;
+  risk: string;
+  skill_name: string;
+  confidence: number;
+  reason: string;
+}
+
 const BASE = "/api/skills";
 
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
@@ -51,4 +82,13 @@ export const skillsApi = {
       method: "POST",
       body: JSON.stringify(body ?? {}),
     }),
+
+  select: (task: string, opts?: Omit<SkillSelectRequest, "task">): Promise<SkillSelectResponse> =>
+    request(`${BASE}/select`, {
+      method: "POST",
+      body: JSON.stringify({ task, ...opts }),
+    }),
+
+  trace: (limit?: number): Promise<SkillTraceItem[]> =>
+    request(`${BASE}/trace${limit !== undefined ? `?limit=${limit}` : ""}`),
 };

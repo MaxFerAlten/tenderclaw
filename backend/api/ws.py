@@ -30,30 +30,41 @@ class WSConnectionManager:
     """Manages active WebSocket connections to allow cross-request event pushing."""
     def __init__(self):
         self.active_connections: dict[str, set[WebSocket]] = {}
+        self._seq_counters: dict[str, int] = {}
 
     def connect(self, ws: WebSocket, session_id: str):
         if session_id not in self.active_connections:
             self.active_connections[session_id] = set()
+            self._seq_counters[session_id] = 0
         self.active_connections[session_id].add(ws)
 
     def disconnect(self, ws: WebSocket, session_id: str):
         if session_id in self.active_connections:
-            self.active_connections[session_id].remove(ws)
+            self.active_connections[session_id].discard(ws)
             if not self.active_connections[session_id]:
                 del self.active_connections[session_id]
+                self._seq_counters.pop(session_id, None)
+
+    def next_seq(self, session_id: str) -> int:
+        """Increment and return the per-session sequence counter."""
+        self._seq_counters[session_id] = self._seq_counters.get(session_id, 0) + 1
+        return self._seq_counters[session_id]
 
     def active_sessions(self) -> list[str]:
         """Return list of session IDs with active WebSocket connections."""
         return list(self.active_connections.keys())
 
     async def send_to_session(self, session_id: str, message: dict[str, Any]):
-        """Push a message to all active clients of a session."""
-        if session_id in self.active_connections:
-            for ws in self.active_connections[session_id]:
-                try:
-                    await ws.send_json(message)
-                except Exception as e:
-                    logger.warning("Failed to send message to %s: %s", session_id, e)
+        """Push a message to all active clients of a session, stamping seq on sequenced events."""
+        if session_id not in self.active_connections:
+            return
+        if "seq" not in message and "type" in message:
+            message = {**message, "seq": self.next_seq(session_id)}
+        for ws in list(self.active_connections[session_id]):
+            try:
+                await ws.send_json(message)
+            except Exception as e:
+                logger.warning("Failed to send message to %s: %s", session_id, e)
 
 ws_manager = WSConnectionManager()
 
@@ -93,9 +104,9 @@ async def websocket_endpoint(ws: WebSocket, session_id: str) -> None:
                 image_attachments = [a for a in attachments if a.get("type", "").startswith("image/")]
                 if image_attachments:
                     # Check if model supports vision BEFORE sending to OpenCode
-                    from backend.services.model_router import detect_provider
+                    from backend.services.model_router import resolve_provider
 
-                    provider = await detect_provider(session.model)
+                    provider = await resolve_provider(session.model, session.model_config)
                     if provider == "opencode" and "big-pickle" in session.model.lower():
                         await send(
                             {
@@ -164,9 +175,9 @@ async def _handle_image_message(
     send: Any,
 ) -> None:
     """Route image messages to the Looker agent."""
-    from backend.services.model_router import detect_provider
+    from backend.services.model_router import resolve_provider
 
-    provider = await detect_provider(session.model)
+    provider = await resolve_provider(session.model, session.model_config)
 
     if provider == "opencode" and "big-pickle" in session.model.lower():
         await send(

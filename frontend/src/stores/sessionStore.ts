@@ -22,6 +22,15 @@ interface ToolState {
   result?: string;
 }
 
+export interface ToolCallStateItem {
+  tool_use_id: string;
+  tool_name: string;
+  state: "requested" | "approved" | "denied" | "running" | "completed" | "failed";
+  is_error: boolean;
+  result_preview: string;
+  updated_at: number;
+}
+
 export interface PipelineStageState {
   stage: string;
   status: "pending" | "started" | "completed" | "failed" | "skipped";
@@ -74,6 +83,9 @@ interface SessionStore {
   artifacts: Map<string, Artifact>;
   activeArtifactId: string | null;
 
+  // Tool call state machine (WSToolCallStateUpdate)
+  toolCallStates: Map<string, ToolCallStateItem>;
+
   // Keyword detection
   detectedKeyword: KeywordMapping | null;
 
@@ -112,6 +124,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   artifacts: new Map(),
   activeArtifactId: null,
   detectedKeyword: null,
+  toolCallStates: new Map(),
 
   getMessageCost: (messageId) => {
     const found = get().perMessageCosts.find((p) => p.messageId === messageId);
@@ -159,6 +172,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
       turnCount: 0,
       turnStartedAt: null,
       detectedKeyword: null,
+      toolCallStates: new Map(),
     }),
 
   handleServerEvent: (event) => {
@@ -335,6 +349,20 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
           detail: event.detail,
           active: true,
         });
+        break;
+      }
+
+      case "tool_call_state": {
+        const states = new Map(state.toolCallStates);
+        states.set(event.tool_use_id, {
+          tool_use_id: event.tool_use_id,
+          tool_name: event.tool_name,
+          state: event.state as ToolCallStateItem["state"],
+          is_error: event.is_error ?? false,
+          result_preview: event.result_preview ?? "",
+          updated_at: Date.now(),
+        });
+        set({ toolCallStates: states });
         break;
       }
 

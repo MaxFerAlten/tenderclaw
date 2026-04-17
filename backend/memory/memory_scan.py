@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from backend.memory.memory_types import MemoryEntry, MemoryMetadata, MemoryType
+from backend.memory.memory_types import MemoryEntry, MemoryMetadata, MemoryScope, MemoryType
 from backend.memory.keyword_extractor import extract_keywords
 
 logger = logging.getLogger("tenderclaw.memory.scan")
@@ -186,3 +186,83 @@ def score_memory_relevance(entry: MemoryEntry, keywords: list[str], query: str) 
 def get_scanner(project_root: str = ".") -> MemoryScanner:
     """Get a configured memory scanner."""
     return MemoryScanner(Path(project_root))
+
+
+# ---------------------------------------------------------------------------
+# Signal extraction from conversation transcript
+# ---------------------------------------------------------------------------
+
+# Patterns that indicate a learnable signal in user messages
+_USER_SIGNAL_PATTERNS: list[tuple[re.Pattern, MemoryType, MemoryScope]] = [
+    # Explicit preferences / feedback
+    (re.compile(r"\b(always|never|prefer|don't|do not|please|stop|keep)\b", re.I), MemoryType.FEEDBACK, MemoryScope.USER),
+    # Project decisions
+    (re.compile(r"\b(we use|we are using|the project uses|decided to|we chose|our stack)\b", re.I), MemoryType.PROJECT, MemoryScope.REPO),
+    # Team conventions
+    (re.compile(r"\b(team|everyone|our convention|standard|policy|agreed)\b", re.I), MemoryType.PROJECT, MemoryScope.TEAM),
+    # References
+    (re.compile(r"\b(see|check|refer to|documented in|wiki|confluence|jira|linear|notion)\b", re.I), MemoryType.REFERENCE, MemoryScope.REPO),
+]
+
+_MIN_SIGNAL_LENGTH = 20
+_MAX_SIGNAL_LENGTH = 500
+
+
+def extract_signals_from_transcript(
+    messages: list[dict],
+    session_id: str = "",
+) -> list[MemoryEntry]:
+    """Scan conversation messages and extract learnable memory signals.
+
+    Only inspects user-role messages. Returns a list of MemoryEntry objects
+    ready to be persisted via memory_manager.auto_save_signals().
+    """
+    signals: list[MemoryEntry] = []
+    seen_contents: set[str] = set()
+
+    for msg in messages:
+        if msg.get("role") != "user":
+            continue
+
+        raw_content = msg.get("content", "")
+        texts: list[str] = []
+        if isinstance(raw_content, str):
+            texts = [raw_content]
+        elif isinstance(raw_content, list):
+            for block in raw_content:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    texts.append(block.get("text", ""))
+
+        for text in texts:
+            text = text.strip()
+            if len(text) < _MIN_SIGNAL_LENGTH:
+                continue
+
+            # Deduplicate
+            fingerprint = text[:80].lower()
+            if fingerprint in seen_contents:
+                continue
+
+            for pattern, mem_type, scope in _USER_SIGNAL_PATTERNS:
+                if pattern.search(text):
+                    seen_contents.add(fingerprint)
+                    content = text[:_MAX_SIGNAL_LENGTH]
+                    keywords = extract_keywords(content, top_n=8)
+                    title = content[:60] + ("..." if len(content) > 60 else "")
+                    entry_id = f"sig_{scope.value}_{datetime.now().strftime('%Y%m%d%H%M%S')}_{len(signals):03d}"
+                    signals.append(MemoryEntry(
+                        id=entry_id,
+                        type=mem_type,
+                        scope=scope,
+                        title=title,
+                        content=content,
+                        keywords=keywords,
+                        metadata=MemoryMetadata(
+                            tags=["auto-extracted", f"session:{session_id[:8]}" if session_id else ""],
+                            created_at=datetime.now(),
+                        ),
+                    ))
+                    break  # One signal per text block
+
+    logger.info("Extracted %d signals from transcript (%d messages)", len(signals), len(messages))
+    return signals

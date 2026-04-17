@@ -15,6 +15,7 @@ from backend.schemas.permissions import (
     PermissionDecision,
     PermissionMode,
     PermissionRule,
+    ToolPermissionPolicy,
 )
 from backend.schemas.tools import RiskLevel
 
@@ -22,6 +23,7 @@ logger = logging.getLogger("tenderclaw.hooks.permissions")
 
 # Default config — can be overridden per-session
 _default_config = PermissionConfig()
+_default_policy = ToolPermissionPolicy.build_default()
 
 
 def check_permission(
@@ -29,6 +31,7 @@ def check_permission(
     tool_input: dict[str, Any],
     mode: PermissionMode | None = None,
     config: PermissionConfig | None = None,
+    policy: ToolPermissionPolicy | None = None,
 ) -> PermissionDecision:
     """Check whether a tool invocation should be allowed.
 
@@ -37,21 +40,23 @@ def check_permission(
         tool_input: The tool's input parameters.
         mode: Override permission mode (uses config.mode if None).
         config: Permission config with rules (uses default if None).
+        policy: Unified ToolPermissionPolicy (uses default if None).
 
     Returns:
         PermissionDecision indicating ALLOW, DENY, or ASK.
     """
     cfg = config or _default_config
+    active_policy = policy or _default_policy
     effective_mode = mode or cfg.mode
 
-    # Trust mode: allow everything
-    if effective_mode == PermissionMode.TRUST:
-        return PermissionDecision.ALLOW
-
-    # Check explicit deny rules first (deny always wins)
+    # Check explicit deny rules first — deny ALWAYS wins, even in TRUST mode
     if _matches_any_rule(tool_name, tool_input, cfg.always_deny):
         logger.info("Permission DENY (explicit rule): %s", tool_name)
         return PermissionDecision.DENY
+
+    # Trust mode: allow everything (after deny check above)
+    if effective_mode == PermissionMode.TRUST:
+        return PermissionDecision.ALLOW
 
     # Check explicit allow rules
     if _matches_any_rule(tool_name, tool_input, cfg.always_allow):
@@ -73,8 +78,8 @@ def check_permission(
         logger.info("Permission DENY (plan mode, non-read-only): %s", tool_name)
         return PermissionDecision.DENY
 
-    # Default mode: ask for medium/high risk, allow low/none
-    return _decide_by_risk(tool_name)
+    # Default mode: consult policy risk_overrides first, then fall back to tool registry
+    return _decide_by_risk(tool_name, policy=active_policy)
 
 
 def _matches_any_rule(
@@ -95,15 +100,26 @@ def _matches_any_rule(
     return False
 
 
-def _decide_by_risk(tool_name: str) -> PermissionDecision:
-    """In default mode, decide based on tool risk level."""
+def _decide_by_risk(
+    tool_name: str,
+    policy: ToolPermissionPolicy | None = None,
+) -> PermissionDecision:
+    """Decide based on tool risk level, consulting policy risk_overrides first."""
     from backend.tools.registry import tool_registry
 
     if not tool_registry.has(tool_name):
+        # Unknown tool: check policy for 'high' override, else ask
+        if policy and "high" in policy.risk_overrides:
+            return policy.risk_overrides["high"]
         return PermissionDecision.ASK
 
     tool = tool_registry.get(tool_name)
+    risk_key = tool.risk_level.value  # e.g. "high", "medium", "low", "none"
 
+    if policy and risk_key in policy.risk_overrides:
+        return policy.risk_overrides[risk_key]
+
+    # Built-in default: low/none → allow, everything else → ask
     if tool.risk_level in (RiskLevel.NONE, RiskLevel.LOW):
         return PermissionDecision.ALLOW
 

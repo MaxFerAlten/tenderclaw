@@ -63,6 +63,11 @@ class Plan(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
     tags: list[str] = Field(default_factory=list)
 
+    # Canonical task ID — persisted to disk BEFORE worker bootstrap (OMX v0.8.9 PR#643 fix).
+    # Guarantees workers can look up this plan by its stable canonical ID even if
+    # the full plan object hasn't been written yet.
+    canonical_task_id: str | None = None
+
     def to_prompt_context(self) -> str:
         """Format plan for injection into agent prompts."""
         lines = [f"## Plan: {self.task[:120]}"]
@@ -94,6 +99,32 @@ class PlanStore:
 
     # --- CRUD ---
 
+    def reserve_canonical_id(self, session_id: str, task: str) -> str:
+        """Reserve a canonical task ID and flush a stub to disk immediately.
+
+        CRITICAL FIX (OMX v0.8.9 PR#643): call this BEFORE bootstrapping any
+        worker so the worker can always resolve the plan by its stable ID even
+        before the full plan has been written.  The stub contains enough info
+        to be loaded by ``get()``; it will be overwritten by the full plan once
+        ``create(canonical_task_id=...)`` is called.
+        """
+        canonical_id = f"plan_{uuid.uuid4().hex[:10]}"
+        stub = Plan(
+            plan_id=canonical_id,
+            session_id=session_id,
+            task=task[:500],
+            status=PlanStatus.DRAFT,
+            canonical_task_id=canonical_id,
+        )
+        self._plans[canonical_id] = stub
+        self._save(stub)
+        logger.info(
+            "Canonical task ID reserved: %s (session=%s) — stub flushed before worker bootstrap",
+            canonical_id,
+            session_id,
+        )
+        return canonical_id
+
     def create(
         self,
         session_id: str,
@@ -102,10 +133,17 @@ class PlanStore:
         *,
         pipeline_id: str | None = None,
         research_summary: str = "",
+        canonical_task_id: str | None = None,
     ) -> Plan:
-        """Create and persist a new plan."""
+        """Create and persist a new plan.
+
+        Pass ``canonical_task_id`` if you previously called
+        ``reserve_canonical_id()`` — this reuses the already-flushed ID so
+        workers that looked it up during bootstrap still find the same plan.
+        """
+        plan_id = canonical_task_id or f"plan_{uuid.uuid4().hex[:10]}"
         plan = Plan(
-            plan_id=f"plan_{uuid.uuid4().hex[:10]}",
+            plan_id=plan_id,
             session_id=session_id,
             pipeline_id=pipeline_id,
             task=task[:500],
@@ -113,6 +151,7 @@ class PlanStore:
             research_summary=research_summary,
             steps=_parse_steps(plan_content),
             tags=_suggest_tags(task),
+            canonical_task_id=plan_id,
         )
         self._plans[plan.plan_id] = plan
         self._save(plan)

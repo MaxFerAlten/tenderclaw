@@ -134,6 +134,83 @@ class WisdomStore:
             lines.append(line)
         return "\n".join(lines)
 
+    def feedback_loop(
+        self,
+        plan: Any,
+        outcome: str,
+        *,
+        session_id: str = "",
+        code_snippet: str | None = None,
+    ) -> WisdomItem | None:
+        """Extract and persist a wisdom item from a completed plan + outcome.
+
+        Designed to be called automatically at the end of any task execution.
+        Returns the saved :class:`WisdomItem`, or ``None`` if the plan carried
+        no extractable signal (empty task, non-positive success_score, etc.).
+
+        Args:
+            plan:         A ``Plan`` object (or any object with ``.task``,
+                          ``.success_score``, ``.fix_attempts``, ``.issues``
+                          attributes).  Accepts both Pydantic models and dicts.
+            outcome:      Short description of what actually happened / was
+                          produced (e.g. "tests passed", "refactor merged").
+            session_id:   Used for logging / deduplication.
+            code_snippet: Optional representative code snippet to store.
+        """
+        import uuid as _uuid
+
+        # Support both Pydantic models and plain dicts
+        if isinstance(plan, dict):
+            task = plan.get("task", "")
+            success_score = float(plan.get("success_score", 1.0))
+            fix_attempts = int(plan.get("fix_attempts", 0))
+            issues = plan.get("issues", [])
+            plan_content = plan.get("plan_content", "")
+        else:
+            task = getattr(plan, "task", "")
+            success_score = float(getattr(plan, "success_score", 1.0))
+            fix_attempts = int(getattr(plan, "fix_attempts", 0))
+            issues = list(getattr(plan, "issues", []))
+            plan_content = getattr(plan, "plan_content", "")
+
+        if not task:
+            logger.debug("feedback_loop: skipped — empty task (session=%s)", session_id)
+            return None
+
+        # Only emit wisdom for attempts that produced a meaningful signal
+        if success_score <= 0.0:
+            logger.debug(
+                "feedback_loop: skipped — success_score=%.2f (session=%s)", success_score, session_id
+            )
+            return None
+
+        # Build solution pattern from outcome + issues summary
+        pattern_parts = [outcome.strip()]
+        if fix_attempts > 0:
+            pattern_parts.append(f"required {fix_attempts} fix attempt(s)")
+        if issues:
+            pattern_parts.append(f"issues encountered: {'; '.join(issues[:3])}")
+
+        solution_pattern = ". ".join(p for p in pattern_parts if p)
+
+        # Determine task_type from keywords
+        task_type = _infer_task_type(task)
+
+        item = WisdomItem(
+            id=f"w_{_uuid.uuid4().hex[:10]}",
+            task_type=task_type,
+            description=task[:200],
+            solution_pattern=solution_pattern[:500],
+            success_score=min(max(success_score, 0.0), 1.0),
+            code_snippet=code_snippet,
+        )
+        self.add(item)
+        logger.info(
+            "feedback_loop: wisdom saved id=%s type=%s score=%.2f session=%s",
+            item.id, task_type, success_score, session_id,
+        )
+        return item
+
     def record_usage(self, wisdom_id: str) -> None:
         """Record that a wisdom item was used."""
         for item in self._wisdom:
@@ -209,6 +286,24 @@ class WisdomStore:
                 self._wisdom.append(WisdomItem.model_validate(data))
             except Exception as exc:
                 logger.error("Failed to load wisdom %s: %s", file_path, exc)
+
+
+def _infer_task_type(task: str) -> str:
+    """Infer a coarse task type label from the task description."""
+    _TYPE_PATTERNS: list[tuple[re.Pattern, str]] = [
+        (re.compile(r"\b(test|pytest|coverage|spec|fixture)\b", re.I), "testing"),
+        (re.compile(r"\b(fix|debug|repair|patch|bug)\b", re.I), "bugfix"),
+        (re.compile(r"\b(refactor|cleanup|reorganize|rename)\b", re.I), "refactor"),
+        (re.compile(r"\b(implement|build|create|generate|scaffold)\b", re.I), "implementation"),
+        (re.compile(r"\b(research|investigate|analyse|explain|summarize)\b", re.I), "research"),
+        (re.compile(r"\b(deploy|release|migrate|ci/cd|pipeline)\b", re.I), "devops"),
+        (re.compile(r"\b(security|audit|review|vulnerability)\b", re.I), "security"),
+        (re.compile(r"\b(design|plan|spec|architect)\b", re.I), "planning"),
+    ]
+    for pattern, label in _TYPE_PATTERNS:
+        if pattern.search(task):
+            return label
+    return "general"
 
 
 # Module-level instance

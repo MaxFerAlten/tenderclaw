@@ -55,9 +55,8 @@ class SuperpowersPlugin(BasePlugin):
         logger.info("Superpowers plugin init — path: %s", SUPERPOWERS_PATH)
 
     def on_register_skills(self, skills_path: str) -> None:
-        """Register the skills directory from superpowers."""
-        # TenderClaw's skills system reads CLAUDE.md / SKILL.md from the skills dir.
-        # We surface the superpowers skills path here for the core.skills module.
+        """Register the skills directory from superpowers and system skills."""
+        # Register superpowers external skills path
         try:
             from backend.core import skills as skills_module
             sp_skills = SUPERPOWERS_PATH / "skills"
@@ -66,6 +65,65 @@ class SuperpowersPlugin(BasePlugin):
                 logger.info("Registered superpowers skills path: %s", sp_skills)
         except Exception as exc:
             logger.warning("Could not register superpowers skills: %s", exc)
+
+        # Register system skills (brainstorming, writing-plans) with priority loading
+        try:
+            from backend.plugins.superpowers_loader import load_skills_from_markdown
+            from backend.core import skills as skills_module
+
+            local_skills_dir = Path(__file__).resolve().parent.parent.parent / "skills"
+            descriptors = load_skills_from_markdown(local_skills_dir)
+
+            system_skills = [d for d in descriptors if d.get("system")]
+            for desc in system_skills:
+                logger.info(
+                    "System skill loaded: %s (trigger=%s)",
+                    desc["name"], desc["trigger"],
+                )
+            self._system_skills = system_skills
+            logger.info("Loaded %d system skills", len(system_skills))
+        except Exception as exc:
+            logger.warning("Could not load system skills: %s", exc)
+            self._system_skills = []
+
+    def get_system_skills(self) -> list[dict]:
+        """Return loaded system skills."""
+        return getattr(self, "_system_skills", [])
+
+    def should_activate_design_gate(self, user_message: str) -> dict | None:
+        """Check if user message should activate a system design skill.
+
+        Returns the matching system skill descriptor, or None.
+        """
+        text_lower = user_message.lower()
+        design_triggers = [
+            "brainstorm", "design", "spec", "architecture",
+            "let's think", "think first", "design first", "before coding",
+        ]
+        plan_triggers = [
+            "writing-plan", "writing plan", "implementation plan",
+            "break it down", "task list", "decompose",
+        ]
+
+        for skill in self.get_system_skills():
+            trigger = skill.get("trigger", "")
+            if trigger in text_lower:
+                return skill
+
+        # Fuzzy matching on design intent keywords
+        for keyword in design_triggers:
+            if keyword in text_lower:
+                for skill in self.get_system_skills():
+                    if skill["name"] == "brainstorming":
+                        return skill
+
+        for keyword in plan_triggers:
+            if keyword in text_lower:
+                for skill in self.get_system_skills():
+                    if skill["name"] == "writing-plans":
+                        return skill
+
+        return None
 
     def on_register_agents(self, registry: AgentRegistry) -> None:
         """Load and register agents from superpowers/agents/*.md."""
