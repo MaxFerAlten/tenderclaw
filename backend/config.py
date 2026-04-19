@@ -56,6 +56,7 @@ class Settings(BaseSettings):
     otel_endpoint: str = Field(default="", alias="OTEL_EXPORTER_OTLP_ENDPOINT")
     otel_service_name: str = "tenderclaw"
     otel_enabled: bool = True
+    otel_console_export: bool = False
 
     # Superpowers
     superpowers_path: str = ""
@@ -69,7 +70,7 @@ class Settings(BaseSettings):
     # Remote Bridge
     bridge_host: str = "0.0.0.0"
     bridge_port: int = 7001
-    bridge_jwt_secret: str = "change-me-in-production"
+    bridge_jwt_secret: str = Field(default="", alias="BRIDGE_JWT_SECRET")
     bridge_jwt_expiry_hours: int = 24
     bridge_max_sessions: int = 10
     bridge_enabled: bool = False

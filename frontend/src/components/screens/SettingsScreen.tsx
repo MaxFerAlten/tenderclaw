@@ -1,7 +1,7 @@
 /** Settings Screen — configure providers, model, keys, and danger zone. */
 
 import { useState, useEffect } from "react";
-import { Save, Key, Globe, Bot, AlertCircle, ArrowLeft, CheckCircle, XCircle, Loader, DollarSign } from "lucide-react";
+import { Save, Key, Globe, Bot, AlertCircle, ArrowLeft, CheckCircle, XCircle, Loader, DollarSign, Shield, FolderOpen } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useSessionStore } from "../../stores/sessionStore";
 import { useSettingsStore } from "../../stores/settingsStore";
@@ -41,6 +41,7 @@ const POPULAR_MODELS = [
   { id: "openai/gpt-4o-mini", provider: "openrouter", description: "GPT-4o mini (OR)" },
   { id: "meta-llama/llama-3.1-70b-instruct", provider: "openrouter", description: "Llama 3.1 70B (OR)" },
   { id: "mistralai/mistral-7b-instruct", provider: "openrouter", description: "Mistral 7B (OR)" },
+  { id: "big-pickle", provider: "opencode", description: "Big Pickle" },
   { id: "qwen3.6-plus-free", provider: "opencode", description: "Qwen 3.6 Plus - Free" },
   { id: "gpt-5.4-mini", provider: "opencode", description: "GPT-5.4 Mini" },
   { id: "claude-sonnet-4-6", provider: "opencode", description: "Claude Sonnet 4.6" },
@@ -51,6 +52,20 @@ const POPULAR_MODELS = [
   { id: "qwen2.5:14b", provider: "ollama", description: "Qwen 2.5 14B" },
   { id: "codellama:13b", provider: "ollama", description: "Code Llama 13B" },
 ];
+
+const DEFAULT_MODEL = "claude-sonnet-4-20250514";
+const OPENCODE_DEFAULT_MODEL = "big-pickle";
+
+function isKnownProviderModel(provider: string, modelId: string, dynamicModels: string[] = []) {
+  return dynamicModels.includes(modelId) || POPULAR_MODELS.some((m) => m.provider === provider && m.id === modelId);
+}
+
+function preferredModelForProvider(provider: string, dynamicModels: string[] = []) {
+  if (provider === "opencode" && dynamicModels.includes(OPENCODE_DEFAULT_MODEL)) {
+    return OPENCODE_DEFAULT_MODEL;
+  }
+  return dynamicModels[0] ?? POPULAR_MODELS.find((m) => m.provider === provider)?.id ?? DEFAULT_MODEL;
+}
 
 export function SettingsScreen() {
   const model = useSessionStore((s) => s.model);
@@ -65,7 +80,7 @@ export function SettingsScreen() {
     ollama: "", lmstudio: "", llamacpp: "",
   });
   const [selectedProvider, setSelectedProvider] = useState("anthropic");
-  const [selectedModel, setSelectedModel] = useState(model || "claude-sonnet-4-20250514");
+  const [selectedModel, setSelectedModel] = useState(model || DEFAULT_MODEL);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
   const [connectionStatus, setConnectionStatus] = useState<Record<string, "unknown" | "checking" | "ok" | "error">>({});
@@ -79,6 +94,17 @@ export function SettingsScreen() {
   const [inlineValidation, setInlineValidation] = useState<Record<string, "idle" | "checking" | "ok" | "error">>({});
   const [costHistory, setCostHistory] = useState<CostSummary[]>([]);
   const [costLoading, setCostLoading] = useState(true);
+  const [permissionMode, setPermissionMode] = useState("default");
+  const [chatStoragePath, setChatStoragePath] = useState("");
+  const [storageTestResult, setStorageTestResult] = useState<"idle" | "checking" | "ok" | "error">("idle");
+
+  const alignSelectedModel = (provider: string, dynamicModels: string[] = []) => {
+    setSelectedModel((current) => (
+      isKnownProviderModel(provider, current, dynamicModels)
+        ? current
+        : preferredModelForProvider(provider, dynamicModels)
+    ));
+  };
 
   useEffect(() => {
     const savedKeys = localStorage.getItem("tenderclaw_api_keys");
@@ -102,7 +128,7 @@ export function SettingsScreen() {
     loadStatus();
     costApi.getHistory()
       .then(setCostHistory)
-      .catch(() => {})
+      .catch((err) => console.error("Failed to load cost history:", err))
       .finally(() => setCostLoading(false));
   }, [loadStatus]);
 
@@ -123,6 +149,10 @@ export function SettingsScreen() {
       .then((r) => (r.ok ? r.json() : null))
       .then((cfg) => {
         if (!cfg) return;
+        if (cfg.model) {
+          setSelectedModel(cfg.model);
+          setModel(cfg.model);
+        }
         if (cfg.selected_provider) {
           setSelectedProvider(cfg.selected_provider);
           // Kick off model list fetches for providers that load dynamically.
@@ -141,8 +171,14 @@ export function SettingsScreen() {
           llamacpp: prev.llamacpp || cfg.llamacpp_base_url || "",
           gpt4free: prev.gpt4free || cfg.gpt4free_base_url || "",
         }));
+        if (cfg.default_permission_mode) {
+          setPermissionMode(cfg.default_permission_mode);
+        }
+        if (cfg.chat_storage_path) {
+          setChatStoragePath(cfg.chat_storage_path);
+        }
       })
-      .catch(() => {});
+      .catch((err) => console.error("Failed to load config:", err));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
@@ -153,7 +189,7 @@ export function SettingsScreen() {
       if (res.ok) {
         const ids: string[] = await res.json();
         setLmstudioModels(ids);
-        if (ids.length > 0 && !ids.includes(selectedModel)) setSelectedModel(ids[0]);
+        if (ids.length > 0) setSelectedModel((current) => (ids.includes(current) ? current : ids[0]));
       }
     } catch { setLmstudioModels([]); }
   };
@@ -174,6 +210,13 @@ export function SettingsScreen() {
       if (res.ok) {
         const ids: string[] = await res.json();
         setOpencodeModels(ids);
+        if (ids.length > 0) {
+          setSelectedModel((current) => (
+            ids.includes(current)
+              ? current
+              : (ids.includes(OPENCODE_DEFAULT_MODEL) ? OPENCODE_DEFAULT_MODEL : ids[0])
+          ));
+        }
       }
     } catch { setOpencodeModels([]); }
   };
@@ -185,7 +228,7 @@ export function SettingsScreen() {
       if (res.ok) {
         const ids: string[] = await res.json();
         setGpt4freeModels(ids);
-        if (ids.length > 0 && !ids.includes(selectedModel)) setSelectedModel(ids[0]);
+        if (ids.length > 0) setSelectedModel((current) => (ids.includes(current) ? current : ids[0]));
       }
     } catch { setGpt4freeModels([]); }
   };
@@ -197,7 +240,7 @@ export function SettingsScreen() {
       if (res.ok) {
         const ids: string[] = await res.json();
         setLlamacppModels(ids);
-        if (ids.length > 0 && !ids.includes(selectedModel)) setSelectedModel(ids[0]);
+        if (ids.length > 0) setSelectedModel((current) => (ids.includes(current) ? current : ids[0]));
       }
     } catch { setLlamacppModels([]); }
   };
@@ -243,6 +286,7 @@ export function SettingsScreen() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           session_id: sessionId ?? undefined,
+          model: selectedModel,
           ollama_base_url: apiKeys.ollama || undefined,
           lmstudio_base_url: apiKeys.lmstudio || undefined,
           llamacpp_base_url: apiKeys.llamacpp || undefined,
@@ -255,13 +299,13 @@ export function SettingsScreen() {
           openrouter_api_key: apiKeys.openrouter || undefined,
           opencode_api_key: apiKeys.opencode || undefined,
           selected_provider: selectedProvider,
+          default_permission_mode: permissionMode || undefined,
+          chat_storage_path: chatStoragePath || undefined,
         }),
       });
       setSaved(true);
-      const currentProvider = POPULAR_MODELS.find((m) => m.id === selectedModel)?.provider
-        ?? (selectedModel.includes("/") ? "openrouter" : "anthropic");
-      if (currentProvider === "openrouter") fetchOpenrouterModels();
-      if (currentProvider === "opencode") fetchOpencodeModels();
+      if (selectedProvider === "openrouter") fetchOpenrouterModels();
+      if (selectedProvider === "opencode") fetchOpencodeModels();
       setTimeout(() => { setSaved(false); loadStatus(); }, 2000);
     } catch { setError("Failed to save settings."); }
   };
@@ -308,6 +352,7 @@ export function SettingsScreen() {
                   key={p.id}
                   onClick={() => {
                     setSelectedProvider(p.id);
+                    alignSelectedModel(p.id, p.id === "opencode" ? opencodeModels : []);
                     if (p.id === "lmstudio") fetchLmstudioModels();
                     else if (p.id === "llamacpp") fetchLlamacppModels();
                     else if (p.id === "openrouter") fetchOpenrouterModels();
@@ -521,6 +566,101 @@ export function SettingsScreen() {
               </div>
             </div>
           ))}
+        </section>
+
+        {/* ── Permission Mode ── */}
+        <section className="bg-zinc-900 rounded-lg p-6 space-y-4">
+          <h2 className="text-lg font-semibold flex items-center gap-2">
+            <Shield className="w-5 h-5" /> Permission Mode
+          </h2>
+          <p className="text-sm text-zinc-400">
+            Controls whether TenderClaw asks for confirmation before executing tools.
+          </p>
+          <div className="space-y-3">
+            {([
+              { value: "default", label: "Default", desc: "Asks for confirmation on medium/high-risk actions" },
+              { value: "trust", label: "Trust (auto-approve)", desc: "Never asks — all tools execute automatically" },
+              { value: "auto", label: "Auto (ML classifier)", desc: "Uses an ML model to auto-approve safe actions" },
+              { value: "plan", label: "Plan (read-only)", desc: "Only read tools allowed, no writes or executions" },
+            ] as const).map((opt) => (
+              <label
+                key={opt.value}
+                className={`flex items-start gap-3 p-3 rounded-lg border-2 cursor-pointer transition-all ${
+                  permissionMode === opt.value
+                    ? "border-blue-500 bg-blue-500/10"
+                    : "border-zinc-700 hover:border-zinc-600"
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="permissionMode"
+                  checked={permissionMode === opt.value}
+                  onChange={() => setPermissionMode(opt.value)}
+                  className="mt-1 accent-blue-500"
+                />
+                <div>
+                  <div className="font-medium text-sm">{opt.label}</div>
+                  <div className="text-xs text-zinc-400">{opt.desc}</div>
+                </div>
+              </label>
+            ))}
+          </div>
+        </section>
+
+        {/* ── Chat Storage Path ── */}
+        <section className="bg-zinc-900 rounded-lg p-6 space-y-4">
+          <h2 className="text-lg font-semibold flex items-center gap-2">
+            <FolderOpen className="w-5 h-5" /> Chat Storage Path
+          </h2>
+          <p className="text-sm text-zinc-400">
+            By default, chat history (including images) is stored in <code className="bg-zinc-800 px-1.5 py-0.5 rounded text-xs font-mono">~/workspace_tenderclaw/chat/</code>.
+            Each session gets a folder with <code className="bg-zinc-800 px-1.5 py-0.5 rounded text-xs font-mono">conversation.json</code> and its uploaded files.
+          </p>
+          <div className="space-y-2">
+            <input
+              type="text"
+              value={chatStoragePath}
+              onChange={(e) => setChatStoragePath(e.target.value)}
+              placeholder="~/workspace_tenderclaw/chat"
+              className="w-full px-4 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-sm font-mono focus:outline-none focus:border-blue-500"
+            />
+            <div className="flex items-center gap-3">
+              <button
+                onClick={async () => {
+                  setStorageTestResult("checking");
+                  try {
+                    const res = await fetch("/api/config/test-storage-path", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ path: chatStoragePath }),
+                    });
+                    const data = await res.json();
+                    if (res.ok && data.ok) {
+                      setStorageTestResult("ok");
+                    } else {
+                      setStorageTestResult("error");
+                      console.error("Storage test failed:", data.error);
+                    }
+                  } catch {
+                    setStorageTestResult("error");
+                  }
+                }}
+                disabled={storageTestResult === "checking" || !chatStoragePath}
+                className="px-3 py-2 bg-zinc-700 hover:bg-zinc-600 disabled:opacity-40 rounded-lg text-xs transition-colors whitespace-nowrap flex items-center gap-1"
+              >
+                {storageTestResult === "checking" ? (
+                  <><Loader className="w-3 h-3 animate-spin" /> Testing…</>
+                ) : storageTestResult === "ok" ? (
+                  <><CheckCircle className="w-3 h-3 text-green-400" /> Path OK</>
+                ) : storageTestResult === "error" ? (
+                  <><XCircle className="w-3 h-3 text-red-400" /> Failed</>
+                ) : "Test Path"}
+              </button>
+              {storageTestResult === "ok" && (
+                <span className="text-xs text-green-400">Writable — sessions will be saved here.</span>
+              )}
+            </div>
+          </div>
         </section>
 
         {/* Error */}

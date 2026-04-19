@@ -6,18 +6,41 @@ import asyncio
 import json
 import logging
 import uuid
-from datetime import UTC, datetime
 from dataclasses import dataclass, field
-from pathlib import Path
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
-from backend.schemas.sessions import SessionCreate, SessionStatus
-from backend.schemas.messages import Message
 from backend.config import settings
+from backend.schemas.messages import Message
+from backend.schemas.sessions import SessionCreate, SessionStatus
+from backend.services.chat_html import refresh_chat_entrypoints
+from backend.services.workspace import (
+    delete_session_artifacts,
+    ensure_workspace_dirs,
+    find_conversation_path,
+    get_conversation_path,
+    iter_conversation_paths,
+)
 from backend.utils.errors import SessionNotFoundError
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 logger = logging.getLogger("tenderclaw.services.session_store")
 
-STATE_DIR = Path(".tenderclaw/state")
+
+def _get_state_dir() -> Path:
+    """Return the session state directory.
+
+    Uses a custom path from global config if set, otherwise falls back to
+    the default ``~/workspace_tenderclaw/chat`` directory.
+    """
+    return ensure_workspace_dirs()
+
+
+def _ensure_state_dir(dir_path: Path) -> None:
+    """Create the state directory if it doesn't exist."""
+    dir_path.mkdir(parents=True, exist_ok=True)
 
 
 @dataclass
@@ -113,7 +136,7 @@ class SessionData:
     def get_permission_decision(self, tool_use_id: str) -> str | None:
         """Get the resolved decision for a tool_use_id."""
         entry = self._permission_events.get(tool_use_id)
-        return entry["decision"] if entry else None
+        return entry.get("decision") if entry else None
 
     def clear_permission(self, tool_use_id: str) -> None:
         self._permission_events.pop(tool_use_id, None)
@@ -124,7 +147,7 @@ class SessionStore:
 
     def __init__(self) -> None:
         self._sessions: dict[str, SessionData] = {}
-        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        ensure_workspace_dirs()
 
     def create(self, params: SessionCreate) -> SessionData:
         """Create a new session and return its state."""
@@ -137,8 +160,14 @@ class SessionStore:
             working_directory=params.working_directory or ".",
             system_prompt_append=params.system_prompt_append or "",
         )
+        # Apply global default permission mode so new sessions inherit it
+        from backend.api.config import _global_config
+        global_perm = _global_config.get("default_permission_mode")
+        if global_perm:
+            # Normalize to lowercase — PermissionMode enum uses lowercase values
+            state.model_config["permission_mode"] = global_perm.lower()
         self._sessions[session_id] = state
-        logger.info("Session created: %s (model=%s)", session_id, state.model)
+        logger.info("Session created: %s (model=%s, permission_mode=%s)", session_id, state.model, state.model_config.get("permission_mode", "DEFAULT"))
         self._persist_session(state)
         return state
 
@@ -146,12 +175,12 @@ class SessionStore:
         """Get session state by ID. Raises SessionNotFoundError if missing."""
         state = self._sessions.get(session_id)
         if state is None:
-            path = STATE_DIR / f"{session_id}.json"
-            if path.exists():
+            path = find_conversation_path(session_id)
+            if path:
                 try:
-                    with open(path, 'r', encoding='utf-8') as f:
+                    with open(path, encoding='utf-8') as f:
                         data = json.load(f)
-                    state = SessionData.from_dict(data)  # type: ignore[attr-defined]
+                    state = SessionData.from_dict(data)
                     self._sessions[session_id] = state
                     logger.info("Session loaded from disk: %s", session_id)
                 except Exception as exc:
@@ -159,6 +188,12 @@ class SessionStore:
                     raise SessionNotFoundError(f"Session not found: {session_id}")
             else:
                 raise SessionNotFoundError(f"Session not found: {session_id}")
+        # Apply global default if session has no permission_mode set
+        if not state.model_config.get("permission_mode"):
+            from backend.api.config import _global_config
+            global_perm = _global_config.get("default_permission_mode")
+            if global_perm:
+                state.model_config["permission_mode"] = global_perm.lower()
         return state
 
     def list_sessions(self) -> list[SessionData]:
@@ -167,8 +202,8 @@ class SessionStore:
     def delete(self, session_id: str) -> None:
         if session_id in self._sessions:
             del self._sessions[session_id]
-            _path = STATE_DIR / f"{session_id}.json"
-            _path.unlink(missing_ok=True)
+            delete_session_artifacts(session_id)
+            refresh_chat_entrypoints()
             logger.info("Session deleted: %s", session_id)
 
     async def close_all(self) -> None:
@@ -185,8 +220,7 @@ class SessionStore:
     def _persist_session(self, state: SessionData) -> None:
         """Persist full session snapshot including message history to disk."""
         try:
-            _path = STATE_DIR / f"{state.session_id}.json"
-            STATE_DIR.mkdir(parents=True, exist_ok=True)
+            _path = get_conversation_path(state.session_id, create_parent=True)
             serialized_messages = []
             for msg in state.messages:
                 if hasattr(msg, "model_dump"):
@@ -200,6 +234,7 @@ class SessionStore:
                 "status": state.status.value if hasattr(state.status, "value") else str(state.status),
                 "model": state.model,
                 "created_at": state.created_at.isoformat() if hasattr(state, "created_at") else "",
+                "updated_at": datetime.now(UTC).isoformat(),
                 "messages": serialized_messages,
                 "total_usage_input": state.total_usage_input,
                 "total_usage_output": state.total_usage_output,
@@ -212,22 +247,22 @@ class SessionStore:
             }
             with open(_path, "w", encoding="utf-8") as f:
                 json.dump(payload, f, indent=2, ensure_ascii=False)
+            refresh_chat_entrypoints(state.session_id)
             logger.debug("Persisted session %s (%d messages) to disk at %s", state.session_id, len(state.messages), _path)
         except Exception as exc:
             logger.exception("Failed to persist session %s: %s", state.session_id, exc)
 
     def load_all_from_disk(self) -> None:
         """Load all persisted sessions from disk into memory (Wave 2 readiness)."""
-        if not STATE_DIR.exists():
-            return
-        for f in STATE_DIR.glob("*.json"):
+        ensure_workspace_dirs()
+        for f in iter_conversation_paths():
             try:
-                with open(f, 'r', encoding='utf-8') as fh:
+                with open(f, encoding='utf-8') as fh:
                     data = json.load(fh)
                 sid = data.get("session_id") or f.stem
                 if sid in self._sessions:
                     continue
-                obj = SessionData.from_dict(data)  # type: ignore[attr-defined]
+                obj = SessionData.from_dict(data)
                 self._sessions[sid] = obj
                 logger.info("Loaded persisted session %s from disk", sid)
             except Exception as exc:

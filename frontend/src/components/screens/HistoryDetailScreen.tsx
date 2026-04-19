@@ -1,34 +1,11 @@
 /** HistoryDetailScreen — view and manage a single session's history. */
 
-import { useEffect, useState, useCallback } from "react";
-import { useParams, useNavigate } from "react-router-dom";
-import { 
-  ArrowLeft, 
-  Trash2, 
-  Download, 
-  MessageSquare, 
-  Clock,
-  DollarSign,
-  Copy,
-  ChevronLeft,
-  Loader,
-} from "lucide-react";
-import { 
-  getSession,
-  getMessages,
-  deleteSession as deleteSessionApi,
-  exportSession,
-  type MessagePage,
-} from "../../api/historyApi";
-
-interface SessionDetail {
-  session_id: string;
-  title: string;
-  created_at: string;
-  message_count: number;
-  model: string;
-  total_cost_usd: number;
-}
+import { useCallback, useEffect, useState } from "react";
+import { useNavigate, useParams } from "react-router-dom";
+import { ArrowLeft, ChevronLeft, Clock, DollarSign, Download, Loader, MessageSquare, Trash2 } from "lucide-react";
+import { deleteSession as deleteSessionApi, exportSession, getMessages, getSession, type MessagePage } from "../../api/historyApi";
+import type { SessionDetail } from "../../types/history";
+import { HistoryMessageBubble, historyMessageText } from "../history/HistoryMessageBubble";
 
 export function HistoryDetailScreen() {
   const { sessionId } = useParams<{ sessionId: string }>();
@@ -105,9 +82,8 @@ export function HistoryDetailScreen() {
   };
 
   const loadMore = () => {
-    if (messages?.has_more) {
-      const lastMsg = messages.messages[0];
-      loadMessages(lastMsg?.message_id);
+    if (messages?.has_more && messages.cursor) {
+      loadMessages(messages.cursor);
     }
   };
 
@@ -132,7 +108,6 @@ export function HistoryDetailScreen() {
 
   return (
     <div className="flex flex-col h-full bg-zinc-950">
-      {/* Header */}
       <div className="flex items-center gap-4 px-6 py-4 border-b border-zinc-800">
         <button
           onClick={() => navigate("/history")}
@@ -178,42 +153,17 @@ export function HistoryDetailScreen() {
         </div>
       </div>
 
-      {/* Messages */}
       <div className="flex-1 overflow-y-auto">
-        {messages?.messages.map((msg, i) => (
-          <div key={msg.message_id || i} className="px-6 py-4 border-b border-zinc-800/50 group">
-            <div className="flex items-center gap-2 mb-2">
-              <span className={`px-2 py-0.5 rounded text-xs font-medium ${
-                msg.role === "user" 
-                  ? "bg-blue-500/20 text-blue-400" 
-                  : "bg-emerald-500/20 text-emerald-400"
-              }`}>
-                {msg.role}
-              </span>
-              <span className="text-xs text-zinc-500">
-                {msg.timestamp && new Date(msg.timestamp).toLocaleTimeString()}
-              </span>
-              <button
-                onClick={() => navigator.clipboard.writeText(typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content))}
-                className="p-1 hover:bg-zinc-800 rounded opacity-0 group-hover:opacity-100 transition-opacity"
-                title="Copy"
-              >
-                <Copy className="w-3 h-3 text-zinc-500" />
-              </button>
-            </div>
-            <div className="text-sm text-zinc-300">
-              {typeof msg.content === "string" ? (
-                <div className="whitespace-pre-wrap">{msg.content}</div>
-              ) : (
-                <pre className="text-xs bg-zinc-900 p-2 rounded overflow-x-auto">
-                  {JSON.stringify(msg.content, null, 2)}
-                </pre>
-              )}
-            </div>
-          </div>
-        ))}
+        <div className="max-w-4xl mx-auto px-4 py-4 space-y-4">
+          {messages?.messages.map((msg, i) => (
+            <HistoryMessageBubble
+              key={msg.message_id || i}
+              message={msg}
+              onCopy={() => navigator.clipboard.writeText(historyMessageText(msg))}
+            />
+          ))}
+        </div>
 
-        {/* Load more */}
         {messages?.has_more && (
           <div className="flex justify-center py-4">
             <button

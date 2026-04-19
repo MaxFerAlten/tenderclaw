@@ -113,6 +113,11 @@ def parse_skill(name: str, skill_md: Path) -> Skill:
 
     skill = Skill(name=name, path=skill_md, raw=content)
 
+    for line in lines[:20]:
+        stripped = line.strip()
+        if not skill.trigger and stripped.startswith("trigger:"):
+            skill.trigger = stripped.split(":", 1)[1].strip()
+
     # Extract ## Sections
     current_section = ""
     section_lines: list[str] = []
@@ -191,8 +196,13 @@ def match_trigger(text: str) -> list[Skill]:
     """Return skills whose trigger pattern matches the given text."""
     reg = get_registry()
     matched = []
+    text_lower = text.lower()
     for s in reg.all():
-        if s.trigger and s.trigger.lstrip("/") in text:
+        trigger = s.trigger.strip().lstrip("/$").lower()
+        if not trigger:
+            continue
+        pattern = rf"(?<![\w-])[/\$]?{re.escape(trigger)}(?![\w-])"
+        if re.search(pattern, text_lower):
             matched.append(s)
     return matched
 

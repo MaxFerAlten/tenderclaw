@@ -156,6 +156,9 @@ class HookRegistry:
         last_result = HookResult(action=HookAction.CONTINUE)
 
         for entry in entries:
+            if not entry.handler or not callable(entry.handler):
+                logger.warning("Hook %s has no valid handler, skipping", entry.name)
+                continue
             try:
                 result = await entry.handler(event)
             except Exception as exc:

@@ -15,6 +15,8 @@ from typing import Any
 from fastapi import APIRouter
 from pydantic import BaseModel
 
+from backend.services.workspace import get_default_chat_dir
+
 logger = logging.getLogger("tenderclaw.api.config")
 router = APIRouter()
 
@@ -22,6 +24,7 @@ _GLOBAL_CONFIG_PATH = Path(".tenderclaw") / "global_config.json"
 
 
 class ConfigUpdate(BaseModel):
+    model: str | None = None
     anthropic_api_key: str | None = None
     openai_api_key: str | None = None
     google_api_key: str | None = None
@@ -35,6 +38,8 @@ class ConfigUpdate(BaseModel):
     gpt4free_base_url: str | None = None
     default_model: str | None = None
     selected_provider: str | None = None  # explicit provider override
+    default_permission_mode: str | None = None  # TRUST, AUTO, PLAN, DEFAULT
+    chat_storage_path: str | None = None  # custom directory for session storage
     session_id: str | None = None
 
 
@@ -50,8 +55,11 @@ class ConfigResponse(BaseModel):
     lmstudio_base_url: str = ""
     llamacpp_base_url: str = ""
     gpt4free_base_url: str = ""
+    model: str = ""
     default_model: str = ""
     selected_provider: str = ""
+    default_permission_mode: str = "default"
+    chat_storage_path: str = ""
 
 
 # Fallback global config (used when no session_id is provided)
@@ -67,7 +75,10 @@ _global_config: dict[str, Any] = {
     "lmstudio_base_url": "",
     "llamacpp_base_url": "",
     "gpt4free_base_url": "",
+    "model": "",
     "selected_provider": "",
+    "default_permission_mode": "default",
+    "chat_storage_path": "",
 }
 
 
@@ -78,8 +89,12 @@ def _load_global_config() -> None:
     try:
         data = json.loads(_GLOBAL_CONFIG_PATH.read_text(encoding="utf-8"))
         for key in _global_config:
-            if key in data and data[key]:
-                _global_config[key] = data[key]
+            if data.get(key):
+                val = data[key]
+                # Normalize permission_mode to lowercase
+                if key == "default_permission_mode":
+                    val = val.lower()
+                _global_config[key] = val
     except Exception as exc:
         logger.warning("Failed to load global config from disk: %s", exc)
 
@@ -122,11 +137,13 @@ async def get_config(session_id: str | None = None) -> ConfigResponse:
 
     session_cfg: dict[str, str] = {}
     session_keys: dict[str, str] = {}
+    session_model = ""
     if session_id:
         try:
             session = session_store.get(session_id)
             session_cfg = dict(session.model_config or {})
             session_keys = dict(session.api_keys or {})
+            session_model = session.model
         except SessionNotFoundError:
             pass
 
@@ -158,12 +175,19 @@ async def get_config(session_id: str | None = None) -> ConfigResponse:
         lmstudio_base_url=_pick("lmstudio_url", "lmstudio_base_url", "lmstudio_base_url"),
         llamacpp_base_url=_pick("llamacpp_url", "llamacpp_base_url", "llamacpp_base_url"),
         gpt4free_base_url=_pick("gpt4free_url", "gpt4free_base_url", "gpt4free_base_url"),
+        model=session_model or _global_config.get("model") or settings.default_model,
         default_model=settings.default_model,
         selected_provider=(
             session_cfg.get("selected_provider")
             or _global_config.get("selected_provider")
             or ""
         ),
+        default_permission_mode=(
+            (session_cfg.get("permission_mode") or "").lower()
+            or _global_config.get("default_permission_mode", "default")
+            or "default"
+        ),
+        chat_storage_path=_global_config.get("chat_storage_path", "") or str(get_default_chat_dir()),
     )
 
 
@@ -174,28 +198,38 @@ async def update_config(config: ConfigUpdate) -> dict[str, str]:
 
     updates = config.model_dump(exclude_none=True, exclude={"session_id"})
 
+    # Normalize permission mode to lowercase — PermissionMode enum uses lowercase values
+    if config.default_permission_mode:
+        updates["default_permission_mode"] = config.default_permission_mode.lower()
+
     if config.session_id:
         # Store keys in the specific session — isolated, no leakage
         try:
             session = session_store.get(config.session_id)
             for field, value in updates.items():
-                provider = next((p for p, k in _PROVIDER_KEY_MAP.items() if k == field), None)
-                if provider:
-                    session.set_api_key(provider, value)
-                    session.model_config[field] = value
-                elif field == "ollama_base_url":
-                    session.model_config["ollama_url"] = value
-                elif field == "lmstudio_base_url":
-                    session.model_config["lmstudio_url"] = value
-                elif field == "llamacpp_base_url":
-                    session.model_config["llamacpp_url"] = value
-                elif field == "gpt4free_base_url":
-                    session.model_config["gpt4free_url"] = value
-                elif field == "selected_provider":
-                    session.model_config["selected_provider"] = value
+                if field == "model" and value:
+                    session.model = value
+                else:
+                    provider = next((p for p, k in _PROVIDER_KEY_MAP.items() if k == field), None)
+                    if provider:
+                        session.set_api_key(provider, value)
+                        session.model_config[field] = value
+                    elif field == "ollama_base_url":
+                        session.model_config["ollama_url"] = value
+                    elif field == "lmstudio_base_url":
+                        session.model_config["lmstudio_url"] = value
+                    elif field == "llamacpp_base_url":
+                        session.model_config["llamacpp_url"] = value
+                    elif field == "gpt4free_base_url":
+                        session.model_config["gpt4free_url"] = value
+                    elif field == "selected_provider":
+                        session.model_config["selected_provider"] = value
+                if field in ("model", "selected_provider"):
+                    logger.info("Session %s updated %s=%s", config.session_id, field, value)
+            session_store.persist(session)
             logger.info("Session %s config updated: %s", config.session_id, list(updates.keys()))
         except SessionNotFoundError:
-            pass
+            logger.warning("Session %s not found, skipping session config update", config.session_id)
 
     # ALWAYS update global config as fallback
     for field, value in updates.items():
@@ -253,7 +287,6 @@ async def _probe_provider(provider: str, key: str) -> tuple[bool, str]:
     """Make a minimal API call to check if the key is valid."""
     import httpx
 
-    headers = {"Content-Type": "application/json"}
     try:
         if provider == "anthropic":
             async with httpx.AsyncClient(timeout=10) as client:
@@ -441,3 +474,27 @@ def get_session_gpt4free_url(session_id: str | None = None) -> str:
             pass
 
     return _global_config.get("gpt4free_base_url") or settings.gpt4free_base_url
+
+
+class StoragePathTest(BaseModel):
+    path: str
+
+
+@router.post("/config/test-storage-path")
+async def test_storage_path(body: StoragePathTest) -> dict[str, object]:
+    """Test whether a storage path is writable."""
+    if not body.path:
+        return {"ok": False, "error": "Empty path"}
+    try:
+        p = Path(body.path).expanduser()
+        # Try to create the directory (parents=True so intermediate dirs are created)
+        p.mkdir(parents=True, exist_ok=True)
+        # Test write by creating a temp file
+        test_file = p / ".tenderclaw_write_test"
+        test_file.write_text("ok", encoding="utf-8")
+        test_file.unlink()
+        return {"ok": True, "path": str(p.resolve())}
+    except PermissionError:
+        return {"ok": False, "error": f"Permission denied: {body.path}"}
+    except OSError as exc:
+        return {"ok": False, "error": str(exc)}

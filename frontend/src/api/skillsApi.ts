@@ -75,7 +75,7 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
 export const skillsApi = {
   list: (): Promise<SkillInfo[]> => request(BASE),
 
-  get: (name: string): Promise<SkillDetail> => request(`${BASE}/${encodeURIComponent(name)}`),
+  get: (name: string): Promise<SkillDetail> => request(`${BASE}/${encodeURIComponent(name)}/detail`),
 
   execute: (name: string, body?: SkillExecuteRequest): Promise<SkillExecuteResponse> =>
     request(`${BASE}/${encodeURIComponent(name)}/execute`, {

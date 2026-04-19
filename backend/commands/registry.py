@@ -5,8 +5,7 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from enum import Enum
-from typing import Any
+from typing import Any, ClassVar
 
 logger = logging.getLogger(__name__)
 
@@ -80,8 +79,8 @@ class BaseCommand(ABC):
 class CommandRegistry:
     """Registry for all available commands."""
 
-    _commands: dict[str, type[BaseCommand]] = {}
-    _instances: dict[str, BaseCommand] = {}
+    _commands: ClassVar[dict[str, type[BaseCommand]]] = {}
+    _instances: ClassVar[dict[str, BaseCommand]] = {}
 
     @classmethod
     def register(cls, name: str | None = None):

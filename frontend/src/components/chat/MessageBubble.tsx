@@ -57,6 +57,17 @@ function renderBlocks(blocks: ContentBlock[]) {
     if (block.type === "tool_use" || block.type === "tool_result") {
       return <ToolUseCard key={i} block={block} />;
     }
+    if (block.type === "image") {
+      return (
+        <div key={i} className="mt-2 overflow-hidden rounded-lg border border-white/20 bg-black/20">
+          <img
+            src={block.source}
+            alt={block.name || "Attached image"}
+            className="max-h-80 w-full object-contain"
+          />
+        </div>
+      );
+    }
     return null;
   });
 }

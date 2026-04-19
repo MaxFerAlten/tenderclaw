@@ -3,7 +3,7 @@
  * Handles connection, reconnection, keepalive, and typed message dispatch.
  */
 
-import type { WSServerEvent } from "./types";
+import type { ChatAttachment, PowerLevel, WSServerEvent } from "./types";
 
 type EventHandler = (event: WSServerEvent) => void;
 type StatusHandler = (status: "connecting" | "connected" | "disconnected") => void;
@@ -45,8 +45,8 @@ export class TenderClawWS {
     }
   }
 
-  sendUserMessage(content: string): void {
-    this.send({ type: "user_message", content });
+  sendUserMessage(content: string, attachments: ChatAttachment[] = [], powerLevel: PowerLevel = "medium"): void {
+    this.send({ type: "user_message", content, attachments, power_level: powerLevel });
   }
 
   sendSessionConfig(model: string): void {

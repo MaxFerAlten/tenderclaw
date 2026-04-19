@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from typing import Any, AsyncIterator
 
 from backend.services.providers.base import BaseProvider
+from backend.services.power_levels import PowerLevel, resolve_power_profile
 from backend.utils.errors import ProviderError
 
 logger = logging.getLogger("tenderclaw.services.model_router")
@@ -93,7 +94,7 @@ async def detect_provider(model: str) -> str:
                             model_ids = [m.get("id", "").lower() or m.get("name", "").lower() for m in model_list]
                             if any(model_lower in mId or mId in model_lower for mId in model_ids):
                                 return "llamacpp"
-                except:
+                except Exception:
                     pass
             return None
 
@@ -101,10 +102,9 @@ async def detect_provider(model: str) -> str:
             result = await asyncio.to_thread(_check_llamacpp_slash)
             if result:
                 return result
-        except:
+        except Exception:
             pass
 
-        # Check known OpenRouter prefixes first
         # Check known OpenRouter prefixes first
         openrouter_prefixes = (
             "anthropic/",
@@ -296,10 +296,17 @@ class ModelRouter:
         tools: list[dict[str, Any]] | None = None,
         max_tokens: int = 16384,
         config: dict[str, Any] | None = None,
+        power_level: PowerLevel = "medium",
     ) -> AsyncIterator[dict[str, Any]]:
         """Route a streaming message request to the appropriate provider."""
         provider_name = await resolve_provider(model, config)
         provider = self._get_provider(provider_name, config)
+        power_profile = resolve_power_profile(
+            provider=provider_name,
+            model=model,
+            requested=power_level,
+            max_tokens=max_tokens,
+        )
 
         try:
             async for event in provider.stream(
@@ -307,7 +314,8 @@ class ModelRouter:
                 messages=messages,
                 system=system,
                 tools=tools,
-                max_tokens=max_tokens,
+                max_tokens=power_profile.max_tokens,
+                power_profile=power_profile,
             ):
                 yield event
         except ProviderError as exc:
@@ -323,6 +331,7 @@ class ModelRouter:
         tools: list[dict[str, Any]] | None = None,
         max_tokens: int = 16384,
         config: dict[str, Any] | None = None,
+        power_level: PowerLevel = "medium",
     ) -> GenerateResult:
         """Non-streaming generate — collect all deltas into a result."""
         content_parts: list[str] = []
@@ -335,6 +344,7 @@ class ModelRouter:
             tools=tools,
             max_tokens=max_tokens,
             config=config,
+            power_level=power_level,
         ):
             if event.get("type") == "content_block_delta":
                 delta = event.get("delta", {})
@@ -349,9 +359,9 @@ class ModelRouter:
 def _create_provider(name: str, config: dict[str, Any] | None = None) -> BaseProvider:
     """Create a provider instance by name."""
     if name == "anthropic":
-        from backend.services.providers.anthropic_provider import AnthropicProvider
+        from backend.services.anthropic_client import AnthropicClient
 
-        return AnthropicProvider()
+        return AnthropicClient()
     if name == "openai":
         from backend.services.providers.openai_provider import OpenAIProvider
 

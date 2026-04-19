@@ -9,6 +9,8 @@ Verifies the WS schema layer:
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from backend.schemas.ws import (
@@ -223,7 +225,7 @@ class TestWSConnectionManagerSeq:
         mgr = self._manager()
         mgr.active_connections["sess2"] = set()
         mgr._seq_counters["sess2"] = 10
-        mgr.disconnect(None, "sess2")  # type: ignore[arg-type]
+        asyncio.run(mgr.disconnect(None, "sess2"))  # type: ignore[arg-type]
         assert "sess2" not in mgr._seq_counters
 
     def test_counters_independent_per_session(self):

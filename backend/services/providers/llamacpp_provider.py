@@ -14,6 +14,7 @@ from openai import AsyncOpenAI
 from backend.config import settings
 from backend.schemas.messages import TokenUsage
 from backend.services.providers.base import BaseProvider
+from backend.services.power_levels import PowerProfile
 from backend.utils.errors import ProviderError
 
 logger = logging.getLogger("tenderclaw.providers.llamacpp")
@@ -51,6 +52,7 @@ class LlamaCppProvider(BaseProvider):
         system: str = "",
         tools: list[dict[str, Any]] | None = None,
         max_tokens: int = 16384,
+        power_profile: PowerProfile | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         """Stream completion from llama.cpp server."""
         oai_messages: list[dict[str, Any]] = []

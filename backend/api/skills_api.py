@@ -8,12 +8,12 @@ Sprint 5 additions:
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from typing import Any
 
-from backend.core.skills import list_available_skills, get_skill_by_name, skill_selector
+from backend.core.skills import get_skill_by_name, list_available_skills, skill_selector
 
 logger = logging.getLogger("tenderclaw.api.skills")
 
@@ -74,6 +74,22 @@ class SkillTraceItem(BaseModel):
     skill_name: str
     confidence: float
     reason: str
+
+
+def _skill_detail_response(name: str) -> dict[str, Any]:
+    skill = get_skill_by_name(name)
+    if not skill:
+        raise HTTPException(status_code=404, detail=f"Skill '{name}' not found")
+    return {
+        "name": skill.name,
+        "path": str(skill.path),
+        "description": skill.description,
+        "trigger": skill.trigger,
+        "agents": skill.agents,
+        "flow": skill.flow,
+        "rules": skill.rules,
+        "raw": skill.raw,
+    }
 
 
 @router.get("", response_model=list[SkillInfo])
@@ -139,22 +155,16 @@ async def get_skill_trace(limit: int = 20) -> list[dict[str, Any]]:
     ]
 
 
+@router.get("/{name}/detail", response_model=SkillDetail)
+async def get_skill_detail(name: str) -> dict[str, Any]:
+    """Return detailed info for a specific skill without colliding with named endpoints."""
+    return _skill_detail_response(name)
+
+
 @router.get("/{name}", response_model=SkillDetail)
 async def get_skill(name: str) -> dict[str, Any]:
     """Return detailed info for a specific skill."""
-    skill = get_skill_by_name(name)
-    if not skill:
-        raise HTTPException(status_code=404, detail=f"Skill '{name}' not found")
-    return {
-        "name": skill.name,
-        "path": str(skill.path),
-        "description": skill.description,
-        "trigger": skill.trigger,
-        "agents": skill.agents,
-        "flow": skill.flow,
-        "rules": skill.rules,
-        "raw": skill.raw,
-    }
+    return _skill_detail_response(name)
 
 
 @router.post("/{name}/execute", response_model=SkillExecuteResponse)
@@ -196,8 +206,8 @@ async def execute_skill(name: str, body: SkillExecuteRequest) -> dict[str, Any]:
     # Execute on the session
     try:
         session = session_store.get(body.session_id)
-    except SessionNotFoundError:
-        raise HTTPException(status_code=404, detail=f"Session not found: {body.session_id}")
+    except SessionNotFoundError as err:
+        raise HTTPException(status_code=404, detail=f"Session not found: {body.session_id}") from err
 
     async def send_to_ui(msg: dict[str, Any]) -> None:
         await ws_manager.send_to_session(body.session_id, msg)  # type: ignore

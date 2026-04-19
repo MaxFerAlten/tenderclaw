@@ -11,6 +11,7 @@ from openai import AsyncOpenAI
 from backend.config import settings
 from backend.schemas.messages import TokenUsage
 from backend.services.providers.base import BaseProvider
+from backend.services.power_levels import PowerProfile
 from backend.utils.errors import ProviderError
 
 logger = logging.getLogger("tenderclaw.providers.openrouter")
@@ -40,6 +41,7 @@ class OpenRouterProvider(BaseProvider):
         system: str = "",
         tools: list[dict[str, Any]] | None = None,
         max_tokens: int = 16384,
+        power_profile: PowerProfile | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         """Stream completion from OpenCode, normalized to TenderClaw format."""
         oai_messages: list[dict[str, Any]] = []
@@ -84,11 +86,14 @@ class OpenRouterProvider(BaseProvider):
 
                 # Append assistant message with tool calls if any
                 if role == "assistant" and tool_calls:
-                    msg_dict = {"role": "assistant"}
-                    if oai_content:
-                        msg_dict["content"] = oai_content
+                    msg_dict = {
+                        "role": "assistant",
+                        "content": _text_content(oai_content) or None,
+                    }
                     msg_dict["tool_calls"] = tool_calls
                     oai_messages.append(msg_dict)
+                elif role == "assistant" and oai_content:
+                    oai_messages.append({"role": role, "content": _text_content(oai_content)})
                 # Append normal content if not an assistant tool_call message
                 elif oai_content:
                     oai_messages.append({"role": role, "content": oai_content})
@@ -121,11 +126,11 @@ class OpenRouterProvider(BaseProvider):
         try:
             stream = await self._client.chat.completions.create(**kwargs)
 
-            # Index-based accumulator: handles OpenAI streaming correctly for
-            # both single and parallel tool calls. Keys are tc.index (int).
-            # Each entry: {id, name, args_parts: list[str], emitted: bool}
-            tool_acc: dict[int, dict] = {}
-            got_text = False
+            # Index-based accumulator: handles OpenAI-compatible streaming for
+            # single and parallel tool calls. Some providers send id/name and
+            # argument chunks in separate deltas, so keep unsent args until the
+            # content block can be safely opened.
+            tool_acc: dict[int, dict[str, Any]] = {}
 
             async for chunk in stream:
                 choice = chunk.choices[0] if chunk.choices else None
@@ -139,22 +144,26 @@ class OpenRouterProvider(BaseProvider):
                         idx = tc.index if tc.index is not None else 0
                         if idx not in tool_acc:
                             tool_acc[idx] = {
-                                "id": tc.id or f"tool_{idx}_{id(chunk)}",
+                                "id": tc.id or "",
                                 "name": tc.function.name or "",
                                 "args_parts": [],
+                                "sent_arg_parts": 0,
                                 "emitted": False,
                             }
                         entry = tool_acc[idx]
-                        # Name can arrive in the first chunk only
-                        if tc.id and not entry["id"]:
+                        # id/name commonly arrive first, but OpenAI-compatible
+                        # gateways are allowed to split them across chunks.
+                        if tc.id:
                             entry["id"] = tc.id
                         if tc.function.name:
                             entry["name"] = tc.function.name
                         if tc.function.arguments:
                             entry["args_parts"].append(tc.function.arguments)
 
-                        # Emit content_block_start as soon as we have a name
-                        if entry["name"] and not entry["emitted"]:
+                        # Emit content_block_start once we know the real tool
+                        # id and name. If the gateway never sends an id, a
+                        # stable fallback is assigned at finish_reason below.
+                        if entry["id"] and entry["name"] and not entry["emitted"]:
                             entry["emitted"] = True
                             logger.debug(
                                 "OpenCode tool_call start: idx=%d id=%s name=%s",
@@ -162,6 +171,7 @@ class OpenRouterProvider(BaseProvider):
                             )
                             yield {
                                 "type": "content_block_start",
+                                "index": idx,
                                 "content_block": {
                                     "type": "tool_use",
                                     "id": entry["id"],
@@ -169,21 +179,22 @@ class OpenRouterProvider(BaseProvider):
                                 },
                             }
 
-                        # Stream args delta (only if block already started)
-                        if entry["emitted"] and tc.function.arguments:
-                            yield {
-                                "type": "content_block_delta",
-                                "index": idx,
-                                "delta": {
-                                    "type": "input_json_delta",
-                                    "partial_json": tc.function.arguments,
-                                },
-                            }
+                        # Stream any args collected since the block opened.
+                        if entry["emitted"]:
+                            for part in entry["args_parts"][entry["sent_arg_parts"]:]:
+                                yield {
+                                    "type": "content_block_delta",
+                                    "index": idx,
+                                    "delta": {
+                                        "type": "input_json_delta",
+                                        "partial_json": part,
+                                    },
+                                }
+                            entry["sent_arg_parts"] = len(entry["args_parts"])
 
                 elif delta and delta.content:
                     text = delta.content
                     if text:
-                        got_text = True
                         yield {
                             "type": "content_block_delta",
                             "index": 0,
@@ -194,8 +205,30 @@ class OpenRouterProvider(BaseProvider):
                     # Close all open tool blocks in index order
                     for _idx in sorted(tool_acc):
                         entry = tool_acc[_idx]
+                        if not entry["emitted"] and entry["name"]:
+                            entry["id"] = entry["id"] or f"tool_{_idx}_{id(chunk)}"
+                            entry["emitted"] = True
+                            yield {
+                                "type": "content_block_start",
+                                "index": _idx,
+                                "content_block": {
+                                    "type": "tool_use",
+                                    "id": entry["id"],
+                                    "name": entry["name"],
+                                },
+                            }
+                            for part in entry["args_parts"][entry["sent_arg_parts"]:]:
+                                yield {
+                                    "type": "content_block_delta",
+                                    "index": _idx,
+                                    "delta": {
+                                        "type": "input_json_delta",
+                                        "partial_json": part,
+                                    },
+                                }
+                            entry["sent_arg_parts"] = len(entry["args_parts"])
                         if entry["emitted"]:
-                            yield {"type": "content_block_stop"}
+                            yield {"type": "content_block_stop", "index": _idx}
                     tool_acc.clear()
 
                     mapped = _map_finish_reason(choice.finish_reason)
@@ -207,8 +240,31 @@ class OpenRouterProvider(BaseProvider):
 
             # Safety: close any tool blocks not finished via finish_reason
             for _idx in sorted(tool_acc):
-                if tool_acc[_idx]["emitted"]:
-                    yield {"type": "content_block_stop"}
+                entry = tool_acc[_idx]
+                if not entry["emitted"] and entry["name"]:
+                    entry["id"] = entry["id"] or f"tool_{_idx}_final"
+                    yield {
+                        "type": "content_block_start",
+                        "index": _idx,
+                        "content_block": {
+                            "type": "tool_use",
+                            "id": entry["id"],
+                            "name": entry["name"],
+                        },
+                    }
+                    for part in entry["args_parts"][entry["sent_arg_parts"]:]:
+                        yield {
+                            "type": "content_block_delta",
+                            "index": _idx,
+                            "delta": {
+                                "type": "input_json_delta",
+                                "partial_json": part,
+                            },
+                        }
+                    entry["emitted"] = True
+                    entry["sent_arg_parts"] = len(entry["args_parts"])
+                if entry["emitted"]:
+                    yield {"type": "content_block_stop", "index": _idx}
 
             yield {
                 "type": "usage",
@@ -216,8 +272,13 @@ class OpenRouterProvider(BaseProvider):
             }
 
         except Exception as exc:
-            logger.error("OpenRouter API error: %s", exc)
-            raise ProviderError(f"OpenRouter API error: {exc}") from exc
+                logger.error("OpenRouter API error: %s", exc)
+                raise ProviderError(f"OpenRouter API error: {exc}") from exc
+
+
+def _text_content(content: list[dict[str, Any]]) -> str:
+    """Flatten text content blocks for assistant history messages."""
+    return "\n".join(str(part.get("text", "")) for part in content if part.get("type") == "text").strip()
 
 
 def _convert_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:

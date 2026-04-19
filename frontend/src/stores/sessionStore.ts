@@ -4,7 +4,7 @@
  */
 
 import { create } from "zustand";
-import type { Message, ContentBlock, WSServerEvent } from "../api/types";
+import type { ChatAttachment, Message, ContentBlock, WSServerEvent } from "../api/types";
 import type { KeywordMapping } from "../api/keywordsApi";
 import { useNotificationStore } from "./notificationStore";
 
@@ -20,6 +20,7 @@ interface ToolState {
   tool_name: string;
   status: "running" | "completed" | "error";
   result?: string;
+  jsonBuffer?: string;
 }
 
 export interface ToolCallStateItem {
@@ -93,7 +94,7 @@ interface SessionStore {
   getMessageCost: (messageId: string) => { inputTokens: number; outputTokens: number; costUsd: number } | null;
   setSession: (sessionId: string, model: string) => void;
   setModel: (model: string) => void;
-  addUserMessage: (content: string) => void;
+  addUserMessage: (content: string, attachments?: ChatAttachment[]) => void;
   handleServerEvent: (event: WSServerEvent) => void;
   setWsStatus: (status: "connecting" | "connected" | "disconnected") => void;
   removePermissionRequest: (toolUseId: string) => void;
@@ -136,14 +137,30 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
 
   setModel: (model) => set({ model }),
 
-  addUserMessage: (content) =>
-    set((s) => ({
-      messages: [
-        ...s.messages,
-        { role: "user", content, message_id: `local_${Date.now()}` },
-      ],
-      status: "busy",
-    })),
+  addUserMessage: (content, attachments = []) =>
+    set((s) => {
+      const trimmed = content.trim();
+      const messageContent: Message["content"] = attachments.length > 0
+        ? [
+            ...(trimmed ? [{ type: "text" as const, text: trimmed }] : []),
+            ...attachments.map((attachment) => ({
+              type: "image" as const,
+              source: attachment.url,
+              mime_type: attachment.type,
+              name: attachment.name,
+              size_bytes: attachment.size_bytes,
+            })),
+          ]
+        : content;
+
+      return {
+        messages: [
+          ...s.messages,
+          { role: "user", content: messageContent, message_id: `local_${Date.now()}` },
+        ],
+        status: "busy",
+      };
+    }),
 
   setWsStatus: (wsStatus) => set({ wsStatus }),
 
@@ -219,6 +236,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
           tool_use_id: event.tool_use_id,
           tool_name: event.tool_name,
           status: "running",
+          jsonBuffer: "",
         });
         // Accumulate tool_use block into pending message
         const tuBlock: ContentBlock = {
@@ -228,6 +246,28 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
           input: {},
         };
         set((s) => ({ activeTools: tools, pendingBlocks: [...s.pendingBlocks, tuBlock] }));
+        break;
+      }
+
+      case "input_json_delta": {
+        const tools = new Map(state.activeTools);
+        const existing = tools.get(event.tool_use_id);
+        let parsed: Record<string, unknown> = {};
+        if (existing) {
+          const jsonBuffer = (existing.jsonBuffer || "") + event.partial_json;
+          try {
+            parsed = JSON.parse(jsonBuffer);
+          } catch {
+            // Partial JSON — not yet complete, keep accumulating
+          }
+          tools.set(event.tool_use_id, { ...existing, jsonBuffer, status: "running" });
+        }
+        set((s) => ({
+          activeTools: tools,
+          pendingBlocks: s.pendingBlocks.map((b) =>
+            b.type === "tool_use" && b.id === event.tool_use_id ? { ...b, input: parsed } : b
+          ),
+        }));
         break;
       }
 

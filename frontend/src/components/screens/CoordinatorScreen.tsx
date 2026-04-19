@@ -25,6 +25,14 @@ interface Coordinator {
   };
 }
 
+const emptyProgress: Coordinator["progress"] = {
+  total: 0,
+  completed: 0,
+  running: 0,
+  pending: 0,
+  percent: 0,
+};
+
 export function CoordinatorScreen() {
   const [coordinators, setCoordinators] = useState<Coordinator[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
@@ -37,7 +45,8 @@ export function CoordinatorScreen() {
   const fetchCoordinators = async () => {
     const res = await fetch("/api/coordinator");
     if (res.ok) {
-      setCoordinators(await res.json());
+      const data = await res.json();
+      setCoordinators(Array.isArray(data) ? data.map(normalizeCoordinator) : []);
     }
   };
 
@@ -168,4 +177,14 @@ export function CoordinatorScreen() {
       </div>
     </div>
   );
+}
+
+function normalizeCoordinator(coordinator: Partial<Coordinator>): Coordinator {
+  return {
+    id: coordinator.id ?? "",
+    name: coordinator.name ?? "Untitled coordinator",
+    state: coordinator.state ?? "idle",
+    tasks: Array.isArray(coordinator.tasks) ? coordinator.tasks : [],
+    progress: coordinator.progress ?? emptyProgress,
+  };
 }

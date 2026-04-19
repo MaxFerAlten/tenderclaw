@@ -26,7 +26,24 @@ export interface ToolResultBlock {
   is_error: boolean;
 }
 
-export type ContentBlock = TextBlock | ToolUseBlock | ToolResultBlock;
+export interface ImageBlock {
+  type: "image";
+  source: string;
+  mime_type: string;
+  name?: string;
+  size_bytes?: number;
+}
+
+export interface ChatAttachment {
+  type: string;
+  url: string;
+  name?: string;
+  size_bytes?: number;
+}
+
+export type PowerLevel = "low" | "medium" | "high" | "extra_high" | "max";
+
+export type ContentBlock = TextBlock | ToolUseBlock | ToolResultBlock | ImageBlock;
 
 export interface Message {
   role: Role;
@@ -74,6 +91,12 @@ export interface WSToolUseStart {
   tool_use_id: string;
   tool_name: string;
   message_id: string;
+}
+
+export interface WSInputJsonDelta {
+  type: "input_json_delta";
+  tool_use_id: string;
+  partial_json: string;
 }
 
 export interface WSToolResult {
@@ -178,6 +201,7 @@ export type WSServerEvent =
   | WSMessageStart
   | WSMessageEnd
   | WSToolUseStart
+  | WSInputJsonDelta
   | WSToolResult
   | WSToolProgress
   | WSPermissionRequest

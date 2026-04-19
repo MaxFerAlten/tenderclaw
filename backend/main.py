@@ -7,25 +7,29 @@ from __future__ import annotations
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import AsyncIterator
+from typing import TYPE_CHECKING
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.api.router import api_router
-from backend.api.channels import router as channels_router
 from backend.config import settings
 from backend.migrations import run_all_pending
 from backend.plugins.base import plugin_loader
+from backend.services.chat_html import refresh_chat_entrypoints
 from backend.services.session_store import session_store
+from backend.services.workspace import ensure_workspace_dirs, get_chat_dir
+from backend.telemetry.logging_config import setup_logging_with_tracing
+from backend.telemetry.metrics import setup_metrics, shutdown_metrics
+from backend.telemetry.tracing import instrument_fastapi, setup_tracing, shutdown_tracing
 from backend.tools.registry import tool_registry
 from backend.tools.startup import register_builtin_tools
 from backend.utils.logging import setup_logging
-from backend.telemetry.tracing import setup_tracing, instrument_fastapi, shutdown_tracing
-from backend.telemetry.metrics import setup_metrics, shutdown_metrics
-from backend.telemetry.logging_config import setup_logging_with_tracing
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
 
 logger = logging.getLogger("tenderclaw")
 
@@ -40,27 +44,32 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         setup_tracing(
             service_name=settings.otel_service_name,
             otlp_endpoint=settings.otel_endpoint or None,
-            console_export=not settings.otel_endpoint,
+            console_export=settings.otel_console_export,
         )
         setup_metrics(
             service_name=settings.otel_service_name,
             otlp_endpoint=settings.otel_endpoint or None,
-            console_export=not settings.otel_endpoint,
+            console_export=settings.otel_console_export,
         )
         instrument_fastapi(_app)
     else:
         setup_logging(settings.log_level)
+
+    chat_dir = ensure_workspace_dirs()
+    logger.info("TenderClaw workspace ready: %s", chat_dir)
+
     # Load persisted sessions into memory at startup (Wave 2 readiness)
     try:
         session_store.load_all_from_disk()
+        refresh_chat_entrypoints()
         logger.info("Persisted sessions loaded at startup (Wave 2 readiness)")
     except Exception as _exc:
         logger.warning("Failed to load persisted sessions at startup: %s", _exc)
-    
+
     # Run settings migrations
     import backend.migrations.migrations  # noqa: F401
     run_all_pending()
-    
+
     # Bootstrap Wave 2 MVP hooks (non-blocking in startup sequence)
     _init_hooks()
     register_builtin_tools(tool_registry)
@@ -68,7 +77,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
     # Initialize plugins
     _init_plugins()
-    
+
     # Wire notification broadcast
     _init_notifications()
 
@@ -77,7 +86,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
     # Initialize channels (Telegram, Discord, etc.)
     _init_channels()
-    
+
     logger.info(
         "TenderClaw started — http://%s:%d/tenderclaw",
         settings.host,
@@ -108,23 +117,23 @@ def _init_plugins() -> None:
     """Initialize plugin system."""
     from backend.agents.registry import agent_registry
     from backend.plugins.superpowers import SuperpowersPlugin
-    
+
     try:
         plugin_loader.load_plugin(SuperpowersPlugin())
         plugin_loader.register_all(tool_registry, agent_registry)
         logger.info("Loaded %d plugins", len(plugin_loader._plugins))
     except FileNotFoundError:
-        logger.warning("Superpowers plugin not found, skipping")
+        logger.info("Superpowers plugin not found, skipping")
 
 
 def _init_channels() -> None:
     """Initialize channel integrations (Telegram, Discord)."""
     from backend.api import channels
-    
+
     if settings.telegram_bot_token:
         channels.telegram_manager.start()
         logger.info("Telegram channel initialized")
-    
+
     if settings.discord_token:
         channels.discord_manager.start()
         logger.info("Discord channel initialized")
@@ -188,7 +197,7 @@ def _init_hooks() -> None:
 async def _shutdown_channels() -> None:
     """Shutdown all channel integrations."""
     from backend.api import channels
-    
+
     await channels.telegram_manager.stop()
     await channels.discord_manager.stop()
 
@@ -212,6 +221,15 @@ def create_app() -> FastAPI:
 
     app.include_router(api_router, prefix="/api")
 
+    @app.get("/tenderclaw/chats")
+    async def serve_chat_index() -> FileResponse:
+        refresh_chat_entrypoints()
+        return _serve_chat_file("index.html")
+
+    @app.get("/tenderclaw/chats/{path:path}")
+    async def serve_chat_file(path: str) -> FileResponse:
+        return _serve_chat_file(path)
+
     if FRONTEND_DIST.exists():
         app.mount(
             "/tenderclaw/assets",
@@ -225,6 +243,21 @@ def create_app() -> FastAPI:
             return FileResponse(FRONTEND_DIST / "index.html")
 
     return app
+
+
+def _serve_chat_file(path: str) -> FileResponse:
+    """Serve generated chat archive files from the active chat directory."""
+    chat_dir = get_chat_dir().resolve()
+    target = (chat_dir / path).resolve()
+    if target == chat_dir:
+        target = target / "index.html"
+    if chat_dir != target and chat_dir not in target.parents:
+        raise HTTPException(status_code=404, detail="Chat artifact not found")
+    if target.is_dir():
+        target = target / "index.html"
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail="Chat artifact not found")
+    return FileResponse(target)
 
 
 app = create_app()

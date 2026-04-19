@@ -4,17 +4,20 @@ from __future__ import annotations
 
 import logging
 from contextlib import contextmanager
-from typing import Any, Generator
 from functools import wraps
+from typing import TYPE_CHECKING, Any
 
 from opentelemetry import trace
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
-from opentelemetry.sdk.resources import Resource, SERVICE_NAME, SERVICE_VERSION
-from opentelemetry.trace import Span, Status, StatusCode, Tracer
-from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from opentelemetry.sdk.resources import SERVICE_NAME, SERVICE_VERSION, Resource
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
+from opentelemetry.trace import Span, Status, StatusCode, Tracer
+from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
+
+if TYPE_CHECKING:
+    from collections.abc import Generator
 
 logger = logging.getLogger("tenderclaw.telemetry")
 
@@ -47,9 +50,7 @@ def setup_tracing(
 
     _provider = TracerProvider(resource=resource)
 
-    if console_export or otlp_endpoint is None:
-        _provider.add_span_processor(BatchSpanProcessor(ConsoleSpanExporter()))
-    else:
+    if otlp_endpoint:
         try:
             otlp_exporter = OTLPSpanExporter(endpoint=otlp_endpoint, insecure=True)
             _provider.add_span_processor(BatchSpanProcessor(otlp_exporter))
@@ -57,6 +58,11 @@ def setup_tracing(
         except Exception as exc:
             logger.warning("Failed to setup OTLP exporter: %s, falling back to console", exc)
             _provider.add_span_processor(BatchSpanProcessor(ConsoleSpanExporter()))
+    elif console_export:
+        _provider.add_span_processor(BatchSpanProcessor(ConsoleSpanExporter()))
+        logger.info("Console tracing export enabled")
+    else:
+        logger.info("Tracing enabled without an exporter")
 
     trace.set_tracer_provider(_provider)
     _tracer = _provider.get_tracer(service_name, service_version)

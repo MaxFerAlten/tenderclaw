@@ -8,6 +8,7 @@ from typing import Any, AsyncIterator
 from backend.config import settings
 from backend.schemas.messages import TokenUsage
 from backend.services.providers.base import BaseProvider
+from backend.services.power_levels import PowerProfile
 from backend.utils.errors import ProviderError
 
 logger = logging.getLogger("tenderclaw.providers.google")
@@ -32,6 +33,7 @@ class GoogleProvider(BaseProvider):
         system: str = "",
         tools: list[dict[str, Any]] | None = None,
         max_tokens: int = 16384,
+        power_profile: PowerProfile | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         """Stream completion from Google Gemini API."""
         from google import genai

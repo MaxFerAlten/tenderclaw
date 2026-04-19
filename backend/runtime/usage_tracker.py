@@ -1,7 +1,7 @@
 """Enhanced usage tracker with per-model tracking and persistence."""
 
 from dataclasses import dataclass, field
-from typing import TypedDict
+from typing import Any, TypedDict
 from pathlib import Path
 import json
 
@@ -106,7 +106,7 @@ class UsageTracker:
         
         return cls.from_dict(data)
     
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         return {
             "session_id": self.session_id,
@@ -116,7 +116,7 @@ class UsageTracker:
         }
     
     @classmethod
-    def from_dict(cls, data: dict) -> "UsageTracker":
+    def from_dict(cls, data: dict[str, Any]) -> "UsageTracker":
         """Create tracker from dictionary."""
         return cls(
             session_id=data.get("session_id", ""),

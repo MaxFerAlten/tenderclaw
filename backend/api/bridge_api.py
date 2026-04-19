@@ -1,9 +1,10 @@
 """Remote bridge API endpoints."""
 
+import json
+from typing import Any
+
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
-from typing import Any
-import json
 
 router = APIRouter(tags=["bridge"])
 

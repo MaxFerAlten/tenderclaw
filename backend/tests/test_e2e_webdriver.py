@@ -32,10 +32,13 @@ def _server_reachable() -> bool:
         return False
 
 
-pytestmark = pytest.mark.skipif(
-    not _server_reachable(),
-    reason="TenderClaw server not running on localhost:7000",
-)
+pytestmark = [
+    pytest.mark.e2e,
+    pytest.mark.skipif(
+        not _server_reachable(),
+        reason="TenderClaw server not running on localhost:7000",
+    ),
+]
 
 
 # ---------------------------------------------------------------------------

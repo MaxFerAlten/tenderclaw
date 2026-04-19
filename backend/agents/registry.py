@@ -31,6 +31,10 @@ class AgentRegistry:
             raise ValueError(f"Unknown agent: {name}")
         return agent
 
+    def exists(self, name: str) -> bool:
+        """Return True if an agent with the given name is registered."""
+        return name.lower() in self._agents
+
     def list_agents(self) -> list[AgentDefinition]:
         """List all registered agents."""
         return list(self._agents.values())

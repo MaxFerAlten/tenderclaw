@@ -58,7 +58,17 @@ class ToolResultBlock(BaseModel):
     is_error: bool = False
 
 
-ContentBlock = TextBlock | ThinkingBlock | ToolUseBlock | ToolResultBlock
+class ImageBlock(BaseModel):
+    """Image content attached to a user message."""
+
+    type: ContentBlockType = ContentBlockType.IMAGE
+    source: str
+    mime_type: str
+    name: str = ""
+    size_bytes: int = 0
+
+
+ContentBlock = TextBlock | ThinkingBlock | ToolUseBlock | ToolResultBlock | ImageBlock
 
 
 class Message(BaseModel):

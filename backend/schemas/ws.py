@@ -10,9 +10,10 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from backend.schemas.messages import TokenUsage
+from backend.services.power_levels import PowerLevel, normalize_power_level
 
 
 # ---------------------------------------------------------------------------
@@ -41,6 +42,7 @@ class WSAttachment(BaseModel):
     type: str  # e.g., "image/png", "text/plain"
     url: str | None = None  # URL or base64 data
     name: str | None = None
+    size_bytes: int = 0
 
 
 class WSUserMessage(BaseModel):
@@ -50,6 +52,14 @@ class WSUserMessage(BaseModel):
     content: str
     message_id: str = ""
     attachments: list[WSAttachment] = Field(default_factory=list)
+    power_level: PowerLevel = "medium"
+
+    @field_validator("power_level", mode="before")
+    @classmethod
+    def _normalize_power_level(cls, value: object) -> PowerLevel:
+        if value is None or isinstance(value, str):
+            return normalize_power_level(value)
+        raise ValueError("power_level must be a string")
 
 
 class WSToolPermissionResponse(BaseModel):
@@ -121,6 +131,14 @@ class WSToolUseStart(WSSeqMixin):
     tool_use_id: str
     tool_name: str
     message_id: str
+
+
+class WSInputJsonDelta(WSSeqMixin):
+    """Partial JSON fragment for a streaming tool input."""
+
+    type: Literal["input_json_delta"] = "input_json_delta"
+    tool_use_id: str
+    partial_json: str
 
 
 class WSToolResult(WSSeqMixin):
@@ -255,6 +273,7 @@ WSServerMessage = (
     | WSMessageStart
     | WSMessageEnd
     | WSToolUseStart
+    | WSInputJsonDelta
     | WSToolResult
     | WSToolProgress
     | WSPermissionRequest

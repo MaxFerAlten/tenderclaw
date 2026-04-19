@@ -8,14 +8,16 @@ cannot be deleted.  Custom user-created agents are fully mutable.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
 
 from backend.agents.registry import agent_registry
-from backend.schemas.agents import AgentDefinition
 from backend.services.custom_agent_store import custom_agent_store
+
+if TYPE_CHECKING:
+    from backend.schemas.agents import AgentDefinition
 
 logger = logging.getLogger("tenderclaw.api.agents")
 router = APIRouter()
@@ -60,8 +62,8 @@ async def get_agent(name: str) -> dict[str, Any]:
     """Return a single agent definition."""
     try:
         agent = agent_registry.get(name)
-    except ValueError:
-        raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=f"Agent '{name}' not found") from err
     d = agent.model_dump()
     d["is_builtin"] = name.lower() in _BUILTIN_NAMES
     return d
@@ -117,8 +119,8 @@ async def patch_agent(name: str, patch: AgentPatch) -> dict[str, Any]:
     """Partially update an agent. Built-ins: only enabled/default_model/system_prompt allowed."""
     try:
         existing = agent_registry.get(name)
-    except ValueError:
-        raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=f"Agent '{name}' not found") from err
 
     is_builtin = name.lower() in _BUILTIN_NAMES
     updates = patch.model_dump(exclude_none=True)
@@ -159,8 +161,8 @@ async def delete_agent(name: str) -> None:
         )
     try:
         agent_registry.get(name)
-    except ValueError:
-        raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=f"Agent '{name}' not found") from err
 
     # Remove from in-memory registry
     agent_registry._agents.pop(name_lower, None)

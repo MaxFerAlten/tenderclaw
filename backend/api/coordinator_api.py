@@ -1,8 +1,9 @@
 """Coordinator API endpoints."""
 
+from typing import Any
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from typing import Any
 
 router = APIRouter(prefix="/coordinator", tags=["coordinator"])
 
@@ -36,6 +37,7 @@ async def create_coordinator(req: CreateCoordinatorRequest) -> dict[str, Any]:
         "name": coordinator.name,
         "state": coordinator.state.value,
         "tasks": [],
+        "progress": coordinator.get_progress(),
     }
 
 
@@ -50,6 +52,16 @@ async def list_coordinators() -> list[dict[str, Any]]:
             "name": c.name,
             "state": c.state.value,
             "task_count": len(c.tasks),
+            "tasks": [
+                {
+                    "id": t.id,
+                    "description": t.description,
+                    "status": t.status,
+                    "assignee": t.assignee,
+                    "result": t.result,
+                }
+                for t in c.tasks
+            ],
             "progress": c.get_progress(),
         }
         for c in CoordinatorManager.list_all()

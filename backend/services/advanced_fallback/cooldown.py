@@ -7,8 +7,8 @@ Implements transient vs persistent cooldown lanes with backoff strategies.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
-from typing import Dict, List, Literal, Optional, Tuple
+from dataclasses import dataclass
+from typing import Any, Literal
 
 from backend.services.advanced_fallback.errors import FailoverReason
 
@@ -53,12 +53,12 @@ class TwoLaneCooldown:
 
     transient_cooldown_ms: int = 0
     persistent_cooldown_ms: int = 0
-    transient_reason: Optional[FailoverReason] = None
-    persistent_reason: Optional[FailoverReason] = None
+    transient_reason: FailoverReason | None = None
+    persistent_reason: FailoverReason | None = None
     error_count: int = 0
-    last_failure_at: Optional[float] = None
+    last_failure_at: float | None = None
 
-    def calculate_transient_cooldown(self, error_count: Optional[int] = None) -> int:
+    def calculate_transient_cooldown(self, error_count: int | None = None) -> int:
         """Calculate transient cooldown based on error count.
 
         Uses stepped backoff: 30s → 60s → 5min (capped)
@@ -67,14 +67,14 @@ class TwoLaneCooldown:
         index = min(count, len(TRANSIENT_COOLDOWN_STEPS) - 1)
         return TRANSIENT_COOLDOWN_STEPS[index]
 
-    def calculate_persistent_cooldown(self, reason: FailoverReason, error_count: Optional[int] = None) -> int:
+    def calculate_persistent_cooldown(self, reason: FailoverReason, error_count: int | None = None) -> int:
         """Calculate persistent cooldown using exponential backoff.
 
         Formula: min(base * 2^error_count, max)
         """
         policy = COOLDOWN_POLICIES.get(reason)
         if not policy:
-            return policy.get("max_ms", 60 * 60 * 1000)
+            return 60 * 60 * 1000
 
         count = error_count if error_count is not None else self.error_count
         base_ms = policy["base_ms"]
@@ -113,25 +113,25 @@ class TwoLaneCooldown:
         self.error_count = 0
         self.last_failure_at = None
 
-    def is_in_transient_cooldown(self, now: Optional[float] = None) -> bool:
+    def is_in_transient_cooldown(self, now: float | None = None) -> bool:
         """Check if in transient cooldown."""
         if self.transient_cooldown_ms <= 0:
             return False
         now = now or time.time()
         return now < (self.last_failure_at or 0) + self.transient_cooldown_ms / 1000
 
-    def is_in_persistent_cooldown(self, now: Optional[float] = None) -> bool:
+    def is_in_persistent_cooldown(self, now: float | None = None) -> bool:
         """Check if in persistent cooldown."""
         if self.persistent_cooldown_ms <= 0:
             return False
         now = now or time.time()
         return now < (self.last_failure_at or 0) + self.persistent_cooldown_ms / 1000
 
-    def is_usable(self, now: Optional[float] = None) -> bool:
+    def is_usable(self, now: float | None = None) -> bool:
         """Check if profile is usable (not in any cooldown)."""
         return not self.is_in_transient_cooldown(now) and not self.is_in_persistent_cooldown(now)
 
-    def unusable_until(self, now: Optional[float] = None) -> float:
+    def unusable_until(self, now: float | None = None) -> float:
         """Get earliest time profile becomes usable."""
         now = now or time.time()
         times = []
@@ -146,8 +146,8 @@ class TwoLaneCooldown:
 
     def should_bypass_model_cooldown(
         self,
-        cooldown_model: Optional[str],
-        requested_model: Optional[str],
+        cooldown_model: str | None,
+        requested_model: str | None,
     ) -> bool:
         """Check if model-scoped cooldown should be bypassed.
 
@@ -188,8 +188,8 @@ class CooldownDecision:
     """Decision on whether to attempt a request during cooldown."""
 
     type: Literal["attempt", "skip", "probe"]
-    reason: Optional[str] = None
-    error: Optional[str] = None
+    reason: str | None = None
+    error: str | None = None
     mark_probe: bool = False
 
 
@@ -197,10 +197,10 @@ def resolve_cooldown_decision(
     reason: FailoverReason,
     is_primary: bool,
     has_fallback_candidates: bool,
-    cooldown_expiry: Optional[float],
+    cooldown_expiry: float | None,
     requested_now: bool,
-    last_probe_at: Optional[float],
-    now: Optional[float] = None,
+    last_probe_at: float | None,
+    now: float | None = None,
 ) -> CooldownDecision:
     """Resolve whether to attempt, skip, or probe during cooldown.
 
@@ -287,7 +287,7 @@ def resolve_cooldown_decision(
     )
 
 
-def _is_probe_throttle_open(last_probe_at: Optional[float], now: float) -> bool:
+def _is_probe_throttle_open(last_probe_at: float | None, now: float) -> bool:
     """Check if probe throttling allows a new probe."""
     if last_probe_at is None:
         return True
@@ -295,9 +295,9 @@ def _is_probe_throttle_open(last_probe_at: Optional[float], now: float) -> bool:
 
 
 def clear_expired_cooldowns(
-    stats: Dict[str, Any],
-    now: Optional[float] = None,
-) -> Dict[str, Any]:
+    stats: dict[str, Any],
+    now: float | None = None,
+) -> dict[str, Any]:
     """Clear expired cooldowns from stats dict.
 
     Returns updated stats with expired cooldowns removed.

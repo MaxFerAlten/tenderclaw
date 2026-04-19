@@ -4,14 +4,32 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import TypedDict
+
+from backend.services.chat_html import refresh_chat_entrypoints
+from backend.services.workspace import (
+    delete_session_artifacts,
+    ensure_workspace_dirs,
+    find_conversation_path,
+    get_conversation_path,
+    iter_conversation_paths,
+)
 
 logger = logging.getLogger("tenderclaw.services.history")
 
 HISTORY_DIR = Path(".tenderclaw/history")
-STATE_DIR = Path(".tenderclaw/state")
+DEFAULT_STATE_DIR = Path(".tenderclaw/state")
+STATE_DIR = DEFAULT_STATE_DIR
+
+
+def _parse_iso_date(value: str) -> date | None:
+    """Parse an ISO date/datetime string down to calendar-day granularity."""
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).date()
+    except ValueError:
+        return None
 
 
 class HistoryPage(TypedDict):
@@ -31,13 +49,30 @@ class SessionHistoryService:
     """Service for managing session history with disk persistence."""
 
     def __init__(self) -> None:
+        ensure_workspace_dirs()
         HISTORY_DIR.mkdir(parents=True, exist_ok=True)
 
     def _session_file(self, session_id: str) -> Path:
         return HISTORY_DIR / f"{session_id}.json"
 
     def _state_file(self, session_id: str) -> Path:
-        return STATE_DIR / f"{session_id}.json"
+        existing = find_conversation_path(session_id)
+        if existing:
+            return existing
+        if STATE_DIR != DEFAULT_STATE_DIR:
+            return STATE_DIR / f"{session_id}.json"
+        return get_conversation_path(session_id)
+
+    def _writable_state_file(self, session_id: str) -> Path:
+        if STATE_DIR != DEFAULT_STATE_DIR:
+            STATE_DIR.mkdir(parents=True, exist_ok=True)
+            return STATE_DIR / f"{session_id}.json"
+        return get_conversation_path(session_id, create_parent=True)
+
+    def _state_files(self) -> list[Path]:
+        if STATE_DIR != DEFAULT_STATE_DIR:
+            return list(STATE_DIR.glob("*.json"))
+        return list(iter_conversation_paths())
 
     def _generate_title(self, messages: list[dict]) -> str:
         """Generate a title from the first user message."""
@@ -72,13 +107,17 @@ class SessionHistoryService:
     ) -> list[dict]:
         """List sessions with optional filtering."""
         sessions: list[dict] = []
-        state_files = list(STATE_DIR.glob("*.json"))
+        state_files = self._state_files()
+        seen_session_ids: set[str] = set()
 
         for f in state_files:
             try:
                 with open(f, encoding='utf-8') as fh:
                     data = json.load(fh)
                 sid = data.get("session_id") or f.stem
+                if sid in seen_session_ids:
+                    continue
+                seen_session_ids.add(sid)
                 messages = data.get("messages", [])
                 title = data.get("title") or self._generate_title(messages)
                 preview = data.get("preview") or self._generate_preview(messages)
@@ -91,20 +130,16 @@ class SessionHistoryService:
                         continue
 
                 if date_from:
-                    try:
-                        dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
-                        if dt < datetime.fromisoformat(date_from):
-                            continue
-                    except (ValueError, TypeError):
-                        pass
+                    created_day = _parse_iso_date(created_at)
+                    from_day = _parse_iso_date(date_from)
+                    if created_day and from_day and created_day < from_day:
+                        continue
 
                 if date_to:
-                    try:
-                        dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
-                        if dt > datetime.fromisoformat(date_to):
-                            continue
-                    except (ValueError, TypeError):
-                        pass
+                    created_day = _parse_iso_date(created_at)
+                    to_day = _parse_iso_date(date_to)
+                    if created_day and to_day and created_day > to_day:
+                        continue
 
                 sessions.append({
                     "session_id": sid,
@@ -154,13 +189,17 @@ class SessionHistoryService:
     ) -> list[dict]:
         """Load all sessions with optional filtering."""
         sessions: list[dict] = []
-        state_files = list(STATE_DIR.glob("*.json"))
+        state_files = self._state_files()
+        seen_session_ids: set[str] = set()
 
         for f in state_files:
             try:
                 with open(f, encoding='utf-8') as fh:
                     data = json.load(fh)
                 sid = data.get("session_id") or f.stem
+                if sid in seen_session_ids:
+                    continue
+                seen_session_ids.add(sid)
                 messages = data.get("messages", [])
                 title = data.get("title") or self._generate_title(messages)
                 preview = data.get("preview") or self._generate_preview(messages)
@@ -268,10 +307,14 @@ class SessionHistoryService:
             return False
 
         try:
-            state_file.unlink()
+            if STATE_DIR != DEFAULT_STATE_DIR:
+                state_file.unlink()
+            else:
+                delete_session_artifacts(session_id)
             history_file = self._session_file(session_id)
             if history_file.exists():
                 history_file.unlink()
+            refresh_chat_entrypoints()
             logger.info("Session deleted from history: %s", session_id)
             return True
         except Exception as exc:
@@ -312,9 +355,10 @@ class SessionHistoryService:
             if not session_id:
                 return None
 
-            state_file = self._state_file(session_id)
+            state_file = self._writable_state_file(session_id)
             with open(state_file, 'w', encoding='utf-8') as f:
                 json.dump(session_data, f, indent=2, ensure_ascii=False)
+            refresh_chat_entrypoints(session_id)
 
             logger.info("Session imported: %s", session_id)
             return session_id

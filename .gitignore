@@ -8,15 +8,20 @@ venv/
 .mypy_cache/
 .ruff_cache/
 .pytest_cache/
+uv.lock
 
 # Frontend
 frontend/node_modules/
 frontend/dist/
 frontend/.vite/
+frontend/*.tsbuildinfo
 
 # Environment
 .env
 .env.local
+
+# Local agent state
+.codex
 
 # IDE
 .vscode/
@@ -26,6 +31,9 @@ frontend/.vite/
 
 # TenderClaw state
 .tenderclaw/
+.tenderclaw.pid
+tenderclaw.log
+tenderclaw-*.log
 
 # OS
 .DS_Store

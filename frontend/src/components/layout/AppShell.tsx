@@ -4,6 +4,7 @@
  */
 
 import { Outlet } from "react-router-dom";
+import type { ReactNode } from "react";
 import { Sidebar } from "./Sidebar";
 import { Header } from "./Header";
 import { HUD } from "./HUD";
@@ -15,9 +16,10 @@ import { ws } from "../../api/ws";
 interface AppShellProps {
   sidebarOpen?: boolean;
   onToggleSidebar?: () => void;
+  children?: ReactNode;
 }
 
-export function AppShell({ sidebarOpen = true, onToggleSidebar }: AppShellProps) {
+export function AppShell({ sidebarOpen = true, onToggleSidebar, children }: AppShellProps) {
   return (
     <div className="flex h-screen bg-zinc-950 font-sans text-zinc-300 relative">
       {sidebarOpen && <Sidebar onToggleSidebar={onToggleSidebar} />}
@@ -25,7 +27,7 @@ export function AppShell({ sidebarOpen = true, onToggleSidebar }: AppShellProps)
         <Header onToggleSidebar={onToggleSidebar} />
         <main className="flex-1 overflow-hidden relative flex">
           <div className="flex-1 overflow-hidden relative flex flex-col">
-            <Outlet />
+            {children ?? <Outlet />}
           </div>
           <Canvas />
           <HUD />

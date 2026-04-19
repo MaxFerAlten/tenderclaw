@@ -14,7 +14,6 @@ import logging
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
 from backend.services.oauth_provider import OAuthError, oauth_manager
@@ -86,7 +85,7 @@ async def authorize(
             session_id=session_id,
         )
     except OAuthError as exc:
-        raise HTTPException(status_code=400, detail=exc.args[0])
+        raise HTTPException(status_code=400, detail=exc.args[0]) from exc
 
     return AuthorizeResponse(url=url, provider=provider)
 
@@ -110,7 +109,7 @@ async def callback(
     try:
         token = await oauth_manager.exchange_code(state=state, code=code)
     except OAuthError as exc:
-        raise HTTPException(status_code=400, detail=exc.args[0])
+        raise HTTPException(status_code=400, detail=exc.args[0]) from exc
 
     return TokenResponse(
         provider=token.provider,
@@ -136,7 +135,7 @@ async def refresh(
     try:
         token = await oauth_manager.refresh_token(provider=provider, profile_id=profile_id)
     except OAuthError as exc:
-        raise HTTPException(status_code=400, detail=exc.args[0])
+        raise HTTPException(status_code=400, detail=exc.args[0]) from exc
 
     return TokenResponse(
         provider=token.provider,
@@ -168,6 +167,6 @@ async def revoke(
     try:
         result = await oauth_manager.revoke(provider=provider, profile_id=profile_id)
     except OAuthError as exc:
-        raise HTTPException(status_code=400, detail=exc.args[0])
+        raise HTTPException(status_code=400, detail=exc.args[0]) from exc
 
     return RevokeResponse(provider=provider, revoked=result)

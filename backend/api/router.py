@@ -4,31 +4,32 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
+from backend.api.agents_api import router as agents_router
+from backend.api.analytics_api import router as analytics_router
+from backend.api.archive_api import router as archive_router
+from backend.api.bridge_api import router as bridge_router
+from backend.api.channels import router as channels_router
+from backend.api.config import router as config_router
+from backend.api.coordinator_api import router as coordinator_router
+from backend.api.cost_api import router as cost_router
+from backend.api.diagnostics import router as diagnostics_router
+from backend.api.gateway import router as gateway_router
 from backend.api.health import router as health_router
+from backend.api.history_api import router as history_router
+from backend.api.keybindings_api import router as keybindings_router
+from backend.api.keywords_api import router as keywords_router
+from backend.api.migrations_api import router as migrations_router
+from backend.api.modes_api import router as modes_router
+from backend.api.mvp import router as mvp_router
+from backend.api.notifications_api import router as notifications_router
+from backend.api.oauth_api import router as oauth_router
+from backend.api.ralph_api import router as ralph_router
+from backend.api.relay import router as relay_router
+from backend.api.sdk_api import router as sdk_router
 from backend.api.sessions import router as sessions_router
+from backend.api.skills_api import router as skills_router
 from backend.api.tools_api import router as tools_router
 from backend.api.ws import router as ws_router
-from backend.api.gateway import router as gateway_router
-from backend.api.channels import router as channels_router
-from backend.api.diagnostics import router as diagnostics_router
-from backend.api.mvp import router as mvp_router
-from backend.api.config import router as config_router
-from backend.api.agents_api import router as agents_router
-from backend.api.skills_api import router as skills_router
-from backend.api.history_api import router as history_router
-from backend.api.sdk_api import router as sdk_router
-from backend.api.cost_api import router as cost_router
-from backend.api.migrations_api import router as migrations_router
-from backend.api.keybindings_api import router as keybindings_router
-from backend.api.coordinator_api import router as coordinator_router
-from backend.api.bridge_api import router as bridge_router
-from backend.api.analytics_api import router as analytics_router
-from backend.api.ralph_api import router as ralph_router
-from backend.api.keywords_api import router as keywords_router
-from backend.api.modes_api import router as modes_router
-from backend.api.oauth_api import router as oauth_router
-from backend.api.notifications_api import router as notifications_router
-from backend.api.relay import router as relay_router
 
 api_router = APIRouter()
 
@@ -57,3 +58,4 @@ api_router.include_router(modes_router, tags=["mode"])
 api_router.include_router(oauth_router, tags=["oauth"])
 api_router.include_router(notifications_router, tags=["notifications"])
 api_router.include_router(relay_router, prefix="/relay", tags=["relay"])
+api_router.include_router(archive_router, prefix="/archive", tags=["archive"])

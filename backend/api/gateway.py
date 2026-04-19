@@ -13,16 +13,19 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime
-from typing import Any, AsyncIterator, Literal
+from typing import TYPE_CHECKING, Any, Literal
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from backend.agents.handler import agent_handler
 from backend.agents.registry import agent_registry
-from backend.schemas.gateway import GatewayRequest, GatewayResponse, GatewayMessage
+from backend.schemas.gateway import GatewayMessage, GatewayRequest, GatewayResponse
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
 
 logger = logging.getLogger("tenderclaw.api.gateway")
 router = APIRouter()
@@ -77,8 +80,8 @@ async def chat_completions(request: ChatCompletionRequest) -> Any:
 
     try:
         agent_registry.get(agent_name)
-    except ValueError:
-        raise HTTPException(status_code=404, detail=f"Agent/Model not found: {agent_name}")
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=f"Agent/Model not found: {agent_name}") from err
 
     if gateway_req.stream:
         return StreamingResponse(
@@ -100,8 +103,8 @@ async def gateway_endpoint(request: GatewayRequest) -> Any:
     agent_name = request.agent_name.lower()
     try:
         agent_registry.get(agent_name)
-    except ValueError:
-        raise HTTPException(status_code=404, detail=f"Agent not found: {agent_name}")
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=f"Agent not found: {agent_name}") from err
 
     if request.stream:
         return StreamingResponse(

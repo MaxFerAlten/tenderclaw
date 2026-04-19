@@ -2,8 +2,9 @@
 
 from fastapi import APIRouter
 from pydantic import BaseModel
-from backend.services.cost_tracker import CostTracker
+
 from backend.api.sessions import get_current_session_id
+from backend.services.cost_tracker import CostTracker
 
 router = APIRouter(prefix="/costs", tags=["costs"])
 

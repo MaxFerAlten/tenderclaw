@@ -247,6 +247,22 @@ class TestSkillsApiSelectShape:
         )
         assert m.matched is False
 
+    def test_trace_skill_detail_does_not_collide_with_trace_endpoint(self):
+        from fastapi import FastAPI
+
+        from backend.api.skills_api import _skill_detail_response, router
+
+        app = FastAPI()
+        app.include_router(router, prefix="/api/skills")
+        paths = [getattr(route, "path", "") for route in app.routes]
+
+        assert paths.index("/api/skills/trace") < paths.index("/api/skills/{name}")
+        assert "/api/skills/{name}/detail" in paths
+
+        detail = _skill_detail_response("trace")
+        assert detail["name"] == "trace"
+        assert isinstance(detail["agents"], list)
+
 
 # ---------------------------------------------------------------------------
 # Skill prompt injection helpers

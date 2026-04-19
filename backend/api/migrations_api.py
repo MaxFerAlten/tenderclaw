@@ -1,8 +1,9 @@
 """API endpoints for migrations."""
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from pydantic import BaseModel
-from backend.migrations.runner import run_all_pending, get_migration_status
+
+from backend.migrations.runner import get_migration_status, run_all_pending
 
 router = APIRouter(prefix="/migrations", tags=["migrations"])
 

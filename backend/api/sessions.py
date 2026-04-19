@@ -9,7 +9,6 @@ from fastapi import APIRouter, HTTPException, Response
 from backend.schemas.sessions import SessionCreate, SessionInfo
 from backend.services.session_store import SessionData, session_store
 from backend.utils.errors import SessionNotFoundError
-from fastapi import HTTPException
 
 logger = logging.getLogger("tenderclaw.api.sessions")
 router = APIRouter()
@@ -23,7 +22,7 @@ def set_current_session(session_id: str) -> None:
     _current_session_id = session_id
 
 
-def get_current_session() -> "SessionData | None":
+def get_current_session() -> SessionData | None:
     """Get the current active session."""
     if _current_session_id:
         try:
@@ -58,8 +57,8 @@ async def get_session(session_id: str) -> SessionInfo:
     """Get metadata for a single session."""
     try:
         state = session_store.get(session_id)
-    except SessionNotFoundError:
-        raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
+    except SessionNotFoundError as err:
+        raise HTTPException(status_code=404, detail=f"Session not found: {session_id}") from err
     return state.to_info()
 
 
@@ -68,8 +67,8 @@ async def resume_session(session_id: str) -> SessionInfo:
     """Resume a session by ensuring its state is loaded (Wave 2 readiness)."""
     try:
         state = session_store.get(session_id)
-    except SessionNotFoundError:
-        raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
+    except SessionNotFoundError as err:
+        raise HTTPException(status_code=404, detail=f"Session not found: {session_id}") from err
     return state.to_info()
 
 
@@ -78,8 +77,8 @@ async def delete_session(session_id: str) -> Response:
     """Delete a session."""
     try:
         session_store.get(session_id)
-    except SessionNotFoundError:
-        raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
+    except SessionNotFoundError as err:
+        raise HTTPException(status_code=404, detail=f"Session not found: {session_id}") from err
     session_store.delete(session_id)
     logger.info("Deleted session %s", session_id)
     return Response(status_code=204)

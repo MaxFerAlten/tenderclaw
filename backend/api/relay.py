@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel
 
 from backend.api.ws import ws_manager
@@ -40,14 +40,14 @@ async def push_task(
     background_tasks: BackgroundTasks,
 ) -> Any:
     """Push a message or task to an active session from an external system.
-    
+
     If trigger_evaluation is True, it will automatically instruct the session's agent
     to answer the task, broadcasting the response real-time to connected UI clients.
     """
     try:
         session = session_store.get(session_id)
-    except SessionNotFoundError:
-        raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
+    except SessionNotFoundError as err:
+        raise HTTPException(status_code=404, detail=f"Session not found: {session_id}") from err
 
     # Forward the message specifically as a system notification or standard message
     # To keep it simple, we use the ws_manager to push a text chunk directly if we want
@@ -65,9 +65,11 @@ async def push_task(
             await ws_manager.send_to_session(session_id, msg)
 
         # Append execution to background tasks so we return 202 Accepted immediately
-        def _run_in_background():
+        async def _run_in_background():
             import asyncio
-            asyncio.create_task(run_conversation_turn(session, combined_content, send_to_ui))
+            task = asyncio.create_task(run_conversation_turn(session, combined_content, send_to_ui))
+            # Optionally track task for cancellation support
+            return task
 
         background_tasks.add_task(_run_in_background)
 

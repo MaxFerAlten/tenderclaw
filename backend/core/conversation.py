@@ -12,7 +12,7 @@ from typing import Any, Callable, Awaitable
 
 from backend.core.streaming import StreamCollector
 from backend.core.system_prompt import build_system_prompt
-from backend.schemas.messages import Message, Role, ToolResultBlock
+from backend.schemas.messages import ContentBlock, ImageBlock, Message, Role, TextBlock, ToolResultBlock
 from backend.schemas.sessions import SessionStatus
 from backend.services.session_store import SessionData, session_store
 from backend.hooks.dispatcher import hook_dispatcher
@@ -34,6 +34,7 @@ from backend.services.notifications import (
     NotificationLevel,
     notification_service,
 )
+from backend.services.power_levels import PowerLevel
 from backend.tools.registry import tool_registry
 from backend.telemetry.tracing import get_tracer, add_span_attributes, SpanKind
 from backend.telemetry.metrics import Metrics
@@ -46,11 +47,22 @@ tracer = get_tracer("tenderclaw.conversation")
 SendFn = Callable[[dict[str, Any]], Awaitable[None]]
 MAX_TURNS = 50
 
+IMAGE_RESPONSE_INSTRUCTIONS = """\
+## Image Analysis Instructions
+The latest user message includes one or more image attachments.
+- Treat attached images as first-class input; inspect visible text, layout, state, UI controls, errors, and context.
+- Answer in the same language as the user's text. If there is no text, infer the language from the recent conversation.
+- Do not narrate private reasoning or start with meta-analysis such as "The user is asking me".
+- For screenshots, ground conclusions in concrete visible evidence and call out uncertainty when text is unreadable.
+- Use tools only when the user explicitly asks you to inspect files, run commands, or fetch external information.
+"""
+
 
 async def run_conversation_turn(
     session: SessionData,
-    user_content: str,
+    user_content: str | list[ContentBlock],
     send: SendFn,
+    power_level: PowerLevel = "medium",
 ) -> None:
     """Run a full conversation turn (may span multiple API calls for tool use)."""
     Metrics.increment_request({"session_id": session.session_id})
@@ -66,7 +78,7 @@ async def run_conversation_turn(
         },
     ) as span:
         try:
-            await _run_conversation_turn_impl(session, user_content, send)
+            await _run_conversation_turn_impl(session, user_content, send, power_level=power_level)
             span.set_status(Status(StatusCode.OK))
         except Exception as exc:
             span.set_status(Status(StatusCode.ERROR, str(exc)))
@@ -76,18 +88,20 @@ async def run_conversation_turn(
 
 async def _run_conversation_turn_impl(
     session: SessionData,
-    user_content: str,
+    user_content: str | list[ContentBlock],
     send: SendFn,
+    power_level: PowerLevel = "medium",
 ) -> None:
     """Internal implementation of conversation turn."""
+    user_text = _content_text(user_content)
+    effective_prompt = user_text or _image_fallback_prompt(user_content)
+    force_team_pipeline = user_text.startswith("/team")
+
     await hook_dispatcher.dispatch(
         HookPoint.SESSION_START,
-        data={"user_content": user_content},
+        data={"user_content": effective_prompt},
         session_id=session.session_id,
     )
-    if user_content.startswith("/team"):
-        await _run_team_pipeline(session, user_content.replace("/team", "").strip(), send)
-        return
 
     session.status = SessionStatus.BUSY
     session.should_abort = False
@@ -95,6 +109,16 @@ async def _run_conversation_turn_impl(
     if not await _validate_api_key(session, send):
         session.status = SessionStatus.IDLE
         return
+
+    # Extract and persist images from user message (if any)
+    if isinstance(user_content, list):
+        try:
+            from backend.services.image_store import extract_and_save_images
+
+            _image_refs = extract_and_save_images(session.session_id, user_content)
+            logger.info("Persisted %d image(s) for session %s", len(_image_refs), session.session_id)
+        except Exception as exc:
+            logger.warning("Image persistence failed for session %s: %s", session.session_id, exc)
 
     session.messages.append(
         Message(
@@ -105,11 +129,15 @@ async def _run_conversation_turn_impl(
     )
     await hook_dispatcher.dispatch(
         HookPoint.MESSAGE_USER_BEFORE,
-        data={"content": user_content},
+        data={"content": effective_prompt},
         session_id=session.session_id,
     )
 
-    intent = await _classify(user_content, session.model)
+    if force_team_pipeline:
+        await _run_team_pipeline(session, user_text.removeprefix("/team").strip(), send)
+        return
+
+    intent = await _classify(effective_prompt, session.model)
     add_span_attributes({"intent": intent})
 
     # Only auto-route to the team pipeline for Anthropic-backed models.
@@ -121,8 +149,8 @@ async def _run_conversation_turn_impl(
 
     _provider = await resolve_provider(session.model, session.model_config)
     _anthropic_native = _provider == "anthropic"
-    if _anthropic_native and intent == "implement" and len(user_content) > 100:
-        await _run_team_pipeline(session, user_content, send)
+    if _anthropic_native and intent == "implement" and len(effective_prompt) > 100:
+        await _run_team_pipeline(session, effective_prompt, send)
         return
 
     try:
@@ -131,7 +159,7 @@ async def _run_conversation_turn_impl(
             kind=SpanKind.INTERNAL,
             attributes={"model": session.model},
         ):
-            await _agentic_loop(session, send)
+            await _agentic_loop(session, send, power_level=power_level)
     except Exception as exc:
         logger.error("Unhandled error in agentic loop for %s: %s", session.session_id, exc, exc_info=True)
         Metrics.increment_error("agentic_loop_error", {"session_id": session.session_id})
@@ -149,6 +177,34 @@ async def _run_conversation_turn_impl(
     finally:
         session.status = SessionStatus.IDLE
         session_store.persist(session)
+        # Archive complete session to workspace for long-term storage
+        try:
+            from backend.services.session_archiver import archive_session
+
+            _serialize_for_archive = []
+            for msg in session.messages:
+                if hasattr(msg, "model_dump"):
+                    _serialize_for_archive.append(msg.model_dump())
+                elif isinstance(msg, dict):
+                    _serialize_for_archive.append(msg)
+                else:
+                    _serialize_for_archive.append({"role": str(msg.role), "content": str(msg.content)})
+
+            archive_session(
+                session.session_id,
+                {
+                    "session_id": session.session_id,
+                    "status": session.status.value if hasattr(session.status, "value") else str(session.status),
+                    "model": session.model,
+                    "created_at": session.created_at.isoformat() if hasattr(session, "created_at") else "",
+                    "messages": _serialize_for_archive,
+                    "total_usage_input": session.total_usage_input,
+                    "total_usage_output": session.total_usage_output,
+                    "total_cost_usd": session.total_cost_usd,
+                },
+            )
+        except Exception as exc:
+            logger.warning("Archive failed for session %s: %s", session.session_id, exc)
 
     await hook_dispatcher.dispatch(
         HookPoint.SESSION_END,
@@ -157,10 +213,21 @@ async def _run_conversation_turn_impl(
     )
 
 
-async def _agentic_loop(session: SessionData, send: SendFn) -> None:
+async def _agentic_loop(
+    session: SessionData,
+    send: SendFn,
+    power_level: PowerLevel = "medium",
+) -> None:
     from backend.core.tool_runner import run_tool_uses
     from backend.memory.memory_manager import memory_manager
     from backend.memory.memdir import get_memory_directory
+
+    # Extract user content from the last user message for skill matching
+    user_content = ""
+    for msg in reversed(session.messages):
+        if msg.role == Role.USER:
+            user_content = _message_text(msg)
+            break
 
     with tracer.start_as_current_span(
         "conversation.agentic_loop",
@@ -170,10 +237,17 @@ async def _agentic_loop(session: SessionData, send: SendFn) -> None:
             "model": session.model,
         },
     ) as loop_span:
-        await _agentic_loop_impl(session, send, loop_span)
+        await _agentic_loop_impl(session, send, loop_span, user_content=user_content, power_level=power_level)
 
 
-async def _agentic_loop_impl(session: SessionData, send: SendFn, parent_span) -> None:
+async def _agentic_loop_impl(
+    session: SessionData,
+    send: SendFn,
+    parent_span,
+    *,
+    user_content: str = "",
+    power_level: PowerLevel = "medium",
+) -> None:
     from backend.core.tool_runner import run_tool_uses
     from backend.memory.memory_manager import memory_manager
     from backend.memory.memdir import get_memory_directory
@@ -184,7 +258,7 @@ async def _agentic_loop_impl(session: SessionData, send: SendFn, parent_span) ->
 
     # Retrieve relevant past wisdom for this conversation
     try:
-        wisdom_context = memory_manager.get_relevant_context(_to_api_messages(session.messages), limit=5)
+        wisdom_context = memory_manager.build_context_for_prompt(_to_api_messages(session.messages), limit=5)
     except Exception:
         wisdom_context = ""
 
@@ -192,7 +266,7 @@ async def _agentic_loop_impl(session: SessionData, send: SendFn, parent_span) ->
     try:
         memdir = get_memory_directory(session.working_directory)
         memdir.scan_and_index()
-        context_text = " ".join(m.content if isinstance(m.content, str) else "" for m in session.messages[-4:])
+        context_text = " ".join(_message_text(m) for m in session.messages[-4:])
         memory_context = memdir.format_for_system_prompt(context_text, limit=5)
     except Exception:
         memory_context = ""
@@ -214,7 +288,10 @@ async def _agentic_loop_impl(session: SessionData, send: SendFn, parent_span) ->
     except Exception as exc:
         logger.debug("Skill trigger matching skipped: %s", exc)
 
-    combined_append = (session.system_prompt_append or "") + skill_append
+    image_append = IMAGE_RESPONSE_INSTRUCTIONS if _latest_user_has_image(session.messages) else ""
+    combined_append = "\n".join(
+        part for part in (session.system_prompt_append or "", skill_append, image_append) if part
+    )
 
     system = build_system_prompt(
         working_directory=session.working_directory,
@@ -223,6 +300,7 @@ async def _agentic_loop_impl(session: SessionData, send: SendFn, parent_span) ->
         memory_context=memory_context,
     )
     tools = tool_registry.list_api_schemas()
+    empty_response_retries = 0
 
     for turn_number in range(1, MAX_TURNS + 1):
         if session.should_abort:
@@ -279,6 +357,7 @@ async def _agentic_loop_impl(session: SessionData, send: SendFn, parent_span) ->
                 tools=tools or None,
                 max_tokens=16384,
                 config=stream_config,
+                power_level=power_level,
             ):
                 if session.should_abort:
                     session.should_abort = False
@@ -302,9 +381,47 @@ async def _agentic_loop_impl(session: SessionData, send: SendFn, parent_span) ->
 
         # Persist assistant message
         blocks = collector.content_blocks()
+        visible_text = "".join(collector.text_parts)
+        if not blocks and not visible_text and not collector.tool_uses:
+            logger.warning(
+                "Empty assistant turn from model=%s session=%s turn=%d stop_reason=%s",
+                session.model,
+                session.session_id,
+                turn_number,
+                collector.stop_reason,
+            )
+            await send(WSMessageEnd(message_id=message_id).model_dump())
+
+            if empty_response_retries < 1:
+                empty_response_retries += 1
+                session.messages.append(
+                    Message(
+                        role=Role.USER,
+                        content=(
+                            "Your previous turn produced no visible answer and no tool call. "
+                            "Continue now with either a real tool call or a concise final answer. "
+                            "Do not emit hidden-thinking tags or private scratchpad text."
+                        ),
+                        message_id=f"msg_{uuid.uuid4().hex[:8]}",
+                    )
+                )
+                continue
+
+            await send(
+                WSError(
+                    error=(
+                        "LM Studio ha restituito una risposta vuota dopo i tool. "
+                        "Il task è stato fermato per evitare una chiusura silenziosa."
+                    ),
+                    code="empty_model_response",
+                ).model_dump()
+            )
+            await send(WSTurnEnd(stop_reason="empty_model_response", usage=collector.usage).model_dump())
+            return
+
         assistant_msg = Message(
             role=Role.ASSISTANT,
-            content=blocks if blocks else "".join(collector.text_parts),
+            content=blocks if blocks else visible_text,
             message_id=message_id,
         )
         session.messages.append(assistant_msg)
@@ -342,7 +459,7 @@ async def _agentic_loop_impl(session: SessionData, send: SendFn, parent_span) ->
             session_id=session.session_id,
         )
 
-        if collector.tool_uses and collector.stop_reason == "tool_use":
+        if collector.tool_uses:
             result_blocks = await run_tool_uses(collector.tool_uses, session, message_id, send)
             session.messages.append(
                 Message(
@@ -357,7 +474,7 @@ async def _agentic_loop_impl(session: SessionData, send: SendFn, parent_span) ->
         await send(WSTurnEnd(stop_reason=collector.stop_reason, usage=collector.usage).model_dump())
         if turn_number > 1:
             _record_wisdom(
-                " ".join(m.content if isinstance(m.content, str) else "" for m in session.messages[:2]),
+                " ".join(_message_text(m) for m in session.messages[:2]),
                 "agentic_loop",
             )
             _log_memory_activity(session, turn_number)
@@ -411,6 +528,34 @@ async def _run_team_pipeline(session: SessionData, task: str, send: SendFn) -> N
     finally:
         session.status = SessionStatus.IDLE
         session_store.persist(session)
+        # Archive complete session to workspace for long-term storage
+        try:
+            from backend.services.session_archiver import archive_session
+
+            _serialize_for_archive = []
+            for msg in session.messages:
+                if hasattr(msg, "model_dump"):
+                    _serialize_for_archive.append(msg.model_dump())
+                elif isinstance(msg, dict):
+                    _serialize_for_archive.append(msg)
+                else:
+                    _serialize_for_archive.append({"role": str(msg.role), "content": str(msg.content)})
+
+            archive_session(
+                session.session_id,
+                {
+                    "session_id": session.session_id,
+                    "status": session.status.value if hasattr(session.status, "value") else str(session.status),
+                    "model": session.model,
+                    "created_at": session.created_at.isoformat() if hasattr(session, "created_at") else "",
+                    "messages": _serialize_for_archive,
+                    "total_usage_input": session.total_usage_input,
+                    "total_usage_output": session.total_usage_output,
+                    "total_cost_usd": session.total_cost_usd,
+                },
+            )
+        except Exception as exc:
+            logger.warning("Archive failed for session %s: %s", session.session_id, exc)
 
     await hook_dispatcher.dispatch(
         HookPoint.SESSION_END,
@@ -511,7 +656,7 @@ def _log_memory_activity(session: SessionData, turn: int) -> None:
 
 
 def _to_api_messages(messages: list[Message]) -> list[dict[str, Any]]:
-    from backend.schemas.messages import TextBlock, ToolResultBlock, ToolUseBlock
+    from backend.schemas.messages import ImageBlock, TextBlock, ToolResultBlock, ToolUseBlock
 
     api: list[dict[str, Any]] = []
     for msg in messages:
@@ -533,5 +678,36 @@ def _to_api_messages(messages: list[Message]) -> list[dict[str, Any]]:
                             "is_error": b.is_error,
                         }
                     )
+                elif isinstance(b, ImageBlock):
+                    blocks.append({"type": "image_url", "image_url": {"url": b.source}})
             api.append({"role": msg.role.value, "content": blocks})
     return api
+
+
+def _content_text(content: str | list[ContentBlock]) -> str:
+    if isinstance(content, str):
+        return content
+    return "\n".join(block.text for block in content if isinstance(block, TextBlock)).strip()
+
+
+def _message_text(message: Message) -> str:
+    return _content_text(message.content)
+
+
+def _latest_user_has_image(messages: list[Message]) -> bool:
+    for message in reversed(messages):
+        if message.role != Role.USER:
+            continue
+        return isinstance(message.content, list) and any(isinstance(block, ImageBlock) for block in message.content)
+    return False
+
+
+def _image_fallback_prompt(content: str | list[ContentBlock]) -> str:
+    if isinstance(content, str):
+        return content
+    image_count = sum(1 for block in content if isinstance(block, ImageBlock))
+    if image_count == 1:
+        return "Analyze the attached image."
+    if image_count > 1:
+        return f"Analyze the {image_count} attached images."
+    return ""

@@ -6,7 +6,7 @@ import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable
+from typing import Any, ClassVar
 
 logger = logging.getLogger(__name__)
 
@@ -18,20 +18,20 @@ class HookEvent(Enum):
     SESSION_DELETED = "session.deleted"
     SESSION_IDLE = "session.idle"
     SESSION_ERROR = "session.error"
-    
+
     MESSAGE_RECEIVED = "message.received"
     MESSAGE_SENT = "message.sent"
     MESSAGE_TRANSFORM = "message.transform"
-    
+
     TOOL_BEFORE = "tool.before"
     TOOL_AFTER = "tool.after"
     TOOL_ERROR = "tool.error"
-    
+
     CONTEXT_INJECT = "context.inject"
     CONTEXT_COMPACT = "context.compact"
-    
+
     PARAMS_SET = "params.set"
-    
+
     KEYWORD_DETECTED = "keyword.detected"
     MODE_ACTIVATED = "mode.activated"
     MODE_DEACTIVATED = "mode.deactivated"
@@ -47,11 +47,11 @@ class HookContext:
     tool_input: dict[str, Any] | None = None
     tool_output: Any = None
     metadata: dict[str, Any] = field(default_factory=dict)
-    
+
     def set(self, key: str, value: Any) -> None:
         """Set metadata value."""
         self.metadata[key] = value
-    
+
     def get(self, key: str, default: Any = None) -> Any:
         """Get metadata value."""
         return self.metadata.get(key, default)
@@ -59,7 +59,7 @@ class HookContext:
 
 class HookResult:
     """Result from a hook execution."""
-    
+
     def __init__(
         self,
         handled: bool = False,
@@ -90,24 +90,23 @@ class BaseHook(ABC):
 
     async def before_execute(self, context: HookContext) -> None:
         """Called before execution."""
-        pass
+        return None
 
     async def after_execute(self, context: HookContext, result: HookResult) -> None:
         """Called after execution."""
-        pass
+        return None
 
 
 class HookRegistry:
     """Registry for all hooks."""
 
-    _hooks: dict[HookEvent, list[type[BaseHook]]] = {}
-    _instances: dict[str, BaseHook] = {}
+    _hooks: ClassVar[dict[HookEvent, list[type[BaseHook]]]] = {}
+    _instances: ClassVar[dict[str, BaseHook]] = {}
 
     @classmethod
     def register(cls, events: list[HookEvent] | None = None):
         """Decorator to register a hook class."""
         def decorator(hook_class: type[BaseHook]):
-            hook_name = hook_class.__name__
             hook_events = events or []
             cls._hooks[hook_class] = {"events": hook_events, "class": hook_class}
             return hook_class
@@ -134,27 +133,27 @@ class HookRegistry:
     async def emit(cls, event: HookEvent, context: HookContext) -> HookResult:
         """Emit an event and run all registered hooks."""
         hooks = cls.get_hooks_for_event(event)
-        
+
         combined_result = HookResult()
         for hook in hooks:
             try:
                 await hook.before_execute(context)
                 result = await hook.execute(context)
-                
+
                 if result.modified and result.modified_content:
                     combined_result.modified = True
                     combined_result.modified_content = result.modified_content
-                    
+
                 if result.handled:
                     combined_result.handled = True
-                    
+
                 combined_result.metadata.update(result.metadata)
-                
+
                 await hook.after_execute(context, result)
             except Exception as e:
                 hook.logger.error(f"Hook {hook.name} error: {e}")
                 combined_result.error = str(e)
-                
+
         return combined_result
 
 

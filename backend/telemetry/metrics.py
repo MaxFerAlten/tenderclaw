@@ -6,17 +6,16 @@ import logging
 from typing import Any
 
 from opentelemetry import metrics
+from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
+from opentelemetry.metrics import Counter, Histogram, Meter, ObservableGauge, Observation
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import (
-    PeriodicExportingMetricReader,
     ConsoleMetricExporter,
-    AggregationTemporality,
+    PeriodicExportingMetricReader,
 )
-from opentelemetry.sdk.resources import Resource, SERVICE_NAME
-from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
-from opentelemetry.metrics import Meter, Counter, Histogram, ObservableGauge
-from opentelemetry.metrics import MeterProvider as OTelMeterProvider
+from opentelemetry.sdk.resources import SERVICE_NAME, Resource
 
+from backend.schemas.sessions import SessionStatus
 from backend.services.session_store import session_store
 
 logger = logging.getLogger("tenderclaw.telemetry")
@@ -35,8 +34,28 @@ cost_histogram: Histogram | None = None
 active_sessions_gauge: ObservableGauge | None = None
 queue_depth_gauge: ObservableGauge | None = None
 
-_active_sessions_callback_count = 0
-_queue_depth_callback_count = 0
+def _active_sessions_count() -> int:
+    try:
+        return len(session_store.list_sessions())
+    except Exception:
+        logger.exception("Failed to count active sessions")
+        return 0
+
+
+def _queue_depth_count() -> int:
+    try:
+        return sum(1 for session in session_store.list_sessions() if getattr(session, "status", None) == SessionStatus.BUSY)
+    except Exception:
+        logger.exception("Failed to count queue depth")
+        return 0
+
+
+def _observe_active_sessions(_options: object) -> list[Observation]:
+    return [Observation(_active_sessions_count())]
+
+
+def _observe_queue_depth(_options: object) -> list[Observation]:
+    return [Observation(_queue_depth_count())]
 
 
 def setup_metrics(
@@ -53,30 +72,41 @@ def setup_metrics(
 
     resource = Resource.create({SERVICE_NAME: service_name})
 
-    if console_export or otlp_endpoint is None:
-        reader = PeriodicExportingMetricReader(
-            ConsoleMetricExporter(),
-            export_interval_millis=export_interval_ms,
-        )
-    else:
+    metric_readers: list[PeriodicExportingMetricReader] = []
+
+    if otlp_endpoint:
         try:
             otlp_exporter = OTLPMetricExporter(
                 endpoint=otlp_endpoint,
                 insecure=True,
             )
-            reader = PeriodicExportingMetricReader(
-                otlp_exporter,
-                export_interval_millis=export_interval_ms,
+            metric_readers.append(
+                PeriodicExportingMetricReader(
+                    otlp_exporter,
+                    export_interval_millis=export_interval_ms,
+                )
             )
             logger.info("OTLP metrics enabled, endpoint: %s", otlp_endpoint)
         except Exception as exc:
             logger.warning("Failed to setup OTLP exporter: %s, falling back to console", exc)
-            reader = PeriodicExportingMetricReader(
+            metric_readers.append(
+                PeriodicExportingMetricReader(
+                    ConsoleMetricExporter(),
+                    export_interval_millis=export_interval_ms,
+                )
+            )
+    elif console_export:
+        metric_readers.append(
+            PeriodicExportingMetricReader(
                 ConsoleMetricExporter(),
                 export_interval_millis=export_interval_ms,
             )
+        )
+        logger.info("Console metrics export enabled")
+    else:
+        logger.info("Metrics enabled without an exporter")
 
-    _meter_provider = MeterProvider(resource=resource, metric_readers=[reader])
+    _meter_provider = MeterProvider(resource=resource, metric_readers=metric_readers)
     metrics.set_meter_provider(_meter_provider)
     _meter = _meter_provider.get_meter(service_name, "0.1.0")
 
@@ -116,33 +146,18 @@ def setup_metrics(
         unit="USD",
     )
 
-    def _get_active_sessions() -> int:
-        try:
-            return len(session_store.sessions)
-        except Exception:
-            return 0
-
-    def _get_queue_depth() -> int:
-        try:
-            return sum(
-                1 for s in session_store.sessions.values()
-                if getattr(s, "status", None) and "busy" in str(s.status).lower()
-            )
-        except Exception:
-            return 0
-
     active_sessions_gauge = _meter.create_observable_gauge(
         name="tenderclaw.active_sessions",
         description="Number of active sessions",
         unit="1",
-        callbacks=[lambda options: [_get_active_sessions()]],
+        callbacks=[_observe_active_sessions],
     )
 
     queue_depth_gauge = _meter.create_observable_gauge(
         name="tenderclaw.queue_depth",
         description="Number of busy sessions",
         unit="1",
-        callbacks=[lambda options: [_get_queue_depth()]],
+        callbacks=[_observe_queue_depth],
     )
 
     logger.info("Metrics initialized for service: %s", service_name)

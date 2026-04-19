@@ -10,6 +10,7 @@ from openai import AsyncOpenAI
 from backend.config import settings
 from backend.schemas.messages import TokenUsage
 from backend.services.providers.base import BaseProvider
+from backend.services.power_levels import PowerProfile
 from backend.utils.errors import ProviderError
 
 logger = logging.getLogger("tenderclaw.providers.openai")
@@ -34,6 +35,7 @@ class OpenAIProvider(BaseProvider):
         system: str = "",
         tools: list[dict[str, Any]] | None = None,
         max_tokens: int = 16384,
+        power_profile: PowerProfile | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         """Stream completion from OpenAI, normalized to TenderClaw format."""
         oai_messages: list[dict[str, Any]] = []
@@ -57,6 +59,8 @@ class OpenAIProvider(BaseProvider):
         }
         if oai_tools:
             kwargs["tools"] = oai_tools
+        if power_profile and power_profile.reasoning_effort:
+            kwargs["reasoning_effort"] = power_profile.reasoning_effort
 
         try:
             stream = await self._client.chat.completions.create(**kwargs)

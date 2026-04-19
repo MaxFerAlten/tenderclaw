@@ -11,6 +11,7 @@ import { useSessionStore } from "../../stores/sessionStore";
 import { useKeybindingContext } from "../../keybindings";
 import { ws } from "../../api/ws";
 import { api } from "../../api/client";
+import type { ChatAttachment, PowerLevel } from "../../api/types";
 import { keywordsApi } from "../../api/keywordsApi";
 
 export function ChatView() {
@@ -29,12 +30,14 @@ export function ChatView() {
   handleServerEventRef.current = handleServerEvent;
   setWsStatusRef.current = setWsStatus;
 
-  const mountedRef = useRef(true);
-
   useEffect(() => {
-    mountedRef.current = true;
+    const unsubscribeEvent = ws.onEvent((e) => handleServerEventRef.current(e));
+    const unsubscribeStatus = ws.onStatus((s) => setWsStatusRef.current(s));
+
     return () => {
-      mountedRef.current = false;
+      unsubscribeEvent();
+      unsubscribeStatus();
+      ws.disconnect();
     };
   }, []);
 
@@ -51,44 +54,45 @@ export function ChatView() {
       return;
     }
 
+    const controller = new AbortController();
+
     const init = async () => {
       try {
         const savedModel = localStorage.getItem("tenderclaw_model") || "claude-sonnet-4-20250514";
-        const res = await api.sessions.create({ working_directory: ".", model: savedModel });
-        if (!mountedRef.current) return;
+        const res = await api.sessions.create({ working_directory: ".", model: savedModel }, controller.signal);
         setSession(res.session_id, savedModel);
-        ws.connect(res.session_id);
-        ws.onEvent((e) => handleServerEventRef.current(e));
-        ws.onStatus((s) => setWsStatusRef.current(s));
-      } catch (err) {
+      } catch (err: unknown) {
+        if ((err as { name?: string }).name === "AbortError") return;
         console.error("Failed to create session:", err);
       }
     };
 
-    init();
+    void init();
 
     return () => {
-      if (!mountedRef.current) {
-        ws.disconnect();
-      }
+      controller.abort();
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
   const handleSend = useCallback(
-    async (content: string) => {
-      try {
-        const result = await keywordsApi.detect(content);
-        if (result.primary_action && result.matches.length > 0) {
-          setDetectedKeyword(result.matches[0]);
-        } else {
+    async (content: string, attachments: ChatAttachment[], powerLevel: PowerLevel) => {
+      if (content.trim()) {
+        try {
+          const result = await keywordsApi.detect(content);
+          if (result.primary_action && result.matches.length > 0) {
+            setDetectedKeyword(result.matches[0]);
+          } else {
+            setDetectedKeyword(null);
+          }
+        } catch {
           setDetectedKeyword(null);
         }
-      } catch {
+      } else {
         setDetectedKeyword(null);
       }
-      addUserMessage(content);
-      ws.sendUserMessage(content);
+      addUserMessage(content, attachments);
+      ws.sendUserMessage(content, attachments, powerLevel);
     },
     [addUserMessage, setDetectedKeyword],
   );

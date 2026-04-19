@@ -1,8 +1,9 @@
 """Ralph mode API endpoints."""
 
+from pathlib import Path
+
 from fastapi import APIRouter
 from pydantic import BaseModel
-from pathlib import Path
 
 router = APIRouter(prefix="/ralph", tags=["ralph"])
 

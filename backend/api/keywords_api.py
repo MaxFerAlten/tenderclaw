@@ -1,8 +1,8 @@
 """Keyword detection API endpoints."""
 
+
 from fastapi import APIRouter
 from pydantic import BaseModel
-from typing import Optional
 
 router = APIRouter(prefix="/keywords", tags=["keywords"])
 
@@ -11,7 +11,7 @@ class KeywordMappingResponse(BaseModel):
     keywords: list[str]
     action: str
     description: str
-    skill: Optional[str]
+    skill: str | None
 
 
 @router.get("/mappings")
@@ -37,7 +37,7 @@ class DetectRequest(BaseModel):
 
 class DetectResponse(BaseModel):
     matches: list[KeywordMappingResponse]
-    primary_action: Optional[str]
+    primary_action: str | None
     extracted_task: str
 
 

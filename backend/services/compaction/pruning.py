@@ -119,11 +119,11 @@ class SupersedeWritesStrategy:
                 result.append(msg)
                 continue
 
-            content = msg.tool_result_content or msg.content or ""
+            content = msg.tool_result_content or (msg.content if isinstance(msg.content, str) else str(msg.content) if msg.content else "")
             tool_name = msg.tool_name or ""
 
             # Detect file operations from tool output
-            file_ref = self._extract_file_reference(content, tool_name)
+            file_ref = self._extract_file_reference(str(content), tool_name)
             if not file_ref:
                 result.append(msg)
                 continue
@@ -134,7 +134,7 @@ class SupersedeWritesStrategy:
             file_operations[file_ref].append(len(result))
 
             # Determine operation type
-            op_type = self._detect_operation(content, tool_name)
+            op_type = self._detect_operation(str(content), tool_name)
 
             # Update state
             old_state = file_states.get(file_ref)
@@ -290,8 +290,8 @@ class CriticalTurnProtection:
 
             # Architectural decision keywords in content
             if not is_critical:
-                content = msg.tool_result_content or msg.content or ""
-                content_lower = content.lower()
+                content = msg.tool_result_content or (msg.content if isinstance(msg.content, str) else "")
+                content_lower = str(content).lower()
                 if any(kw.lower() in content_lower for kw in self.arch_keywords):
                     is_critical = True
 

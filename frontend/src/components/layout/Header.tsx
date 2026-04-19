@@ -29,7 +29,7 @@ export function Header({ onToggleSidebar }: HeaderProps) {
   const [showSelector, setShowSelector] = useState(false);
 
   useEffect(() => {
-    api.models.list().then((res) => setModels(res.data ?? [])).catch(() => {});
+    api.models.list().then((res) => setModels(res.data ?? [])).catch((err) => console.error("Failed to load models:", err));
   }, []);
 
   const handleModelChange = (newModel: string) => {

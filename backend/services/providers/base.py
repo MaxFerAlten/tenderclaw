@@ -6,7 +6,10 @@ Inspired by OpenClaw's plugin-based provider system but with a clean Python ABC.
 from __future__ import annotations
 
 import abc
-from typing import Any, AsyncIterator
+from typing import TYPE_CHECKING, Any, AsyncIterator
+
+if TYPE_CHECKING:
+    from backend.services.power_levels import PowerProfile
 
 
 class BaseProvider(abc.ABC):
@@ -23,6 +26,7 @@ class BaseProvider(abc.ABC):
         system: str = "",
         tools: list[dict[str, Any]] | None = None,
         max_tokens: int = 16384,
+        power_profile: PowerProfile | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         """Stream a completion response.
 

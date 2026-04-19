@@ -111,7 +111,15 @@ export interface ToolResultContent {
   is_error: boolean;
 }
 
-export type ContentBlock = TextContent | ToolUseContent | ToolResultContent;
+export interface ImageContent {
+  type: ContentBlockType.Image;
+  source: string;
+  mime_type: string;
+  name?: string;
+  size_bytes?: number;
+}
+
+export type ContentBlock = TextContent | ToolUseContent | ToolResultContent | ImageContent;
 
 export interface Message {
   role: MessageRole;

@@ -12,7 +12,7 @@ import uuid
 import pytest
 
 from backend.api import config as config_module
-from backend.api.config import get_config
+from backend.api.config import ConfigUpdate, get_config, update_config
 from backend.services.session_store import SessionData, session_store
 
 
@@ -55,6 +55,16 @@ class TestGetConfigHydration:
         resp = await get_config(session_id=session.session_id)
         assert resp.selected_provider == "gpt4free"
 
+    async def test_session_model_round_trips(self, session):
+        session.model = "big-pickle"
+        resp = await get_config(session_id=session.session_id)
+        assert resp.model == "big-pickle"
+
+    async def test_global_model_exposed_without_session(self):
+        config_module._global_config["model"] = "big-pickle"
+        resp = await get_config()
+        assert resp.model == "big-pickle"
+
     async def test_session_local_urls_round_trip(self, session):
         session.model_config["gpt4free_url"] = "http://session-host:1337"
         session.model_config["ollama_url"] = "http://session-host:11434"
@@ -85,3 +95,29 @@ class TestGetConfigHydration:
             assert resp.selected_provider == provider, (
                 f"selected_provider={provider!r} did not round-trip: got {resp.selected_provider!r}"
             )
+
+    async def test_update_config_persists_session_model_without_websocket(self, session):
+        session.model = "claude-sonnet-4-20250514"
+
+        await update_config(
+            ConfigUpdate(
+                session_id=session.session_id,
+                model="big-pickle",
+                selected_provider="opencode",
+            )
+        )
+
+        assert session.model == "big-pickle"
+        assert session.model_config["selected_provider"] == "opencode"
+
+    async def test_update_config_with_missing_session_still_updates_global_fallback(self):
+        await update_config(
+            ConfigUpdate(
+                session_id="missing-session",
+                model="big-pickle",
+                selected_provider="opencode",
+            )
+        )
+
+        assert config_module._global_config["model"] == "big-pickle"
+        assert config_module._global_config["selected_provider"] == "opencode"

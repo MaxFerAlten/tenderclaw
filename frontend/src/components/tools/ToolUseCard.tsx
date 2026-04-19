@@ -18,6 +18,16 @@ export function ToolUseCard({ block }: Props) {
   if (block.type === "tool_use") {
     const toolState = activeTools.get(block.id);
     const status = toolState?.status ?? "running";
+    let displayInput: string;
+    if (toolState?.jsonBuffer) {
+      try {
+        displayInput = JSON.stringify(JSON.parse(toolState.jsonBuffer), null, 2);
+      } catch {
+        displayInput = toolState.jsonBuffer;
+      }
+    } else {
+      displayInput = JSON.stringify(block.input, null, 2);
+    }
     return (
       <div className="my-2 rounded-lg border border-zinc-700 bg-zinc-900/60 text-xs">
         <button
@@ -32,7 +42,7 @@ export function ToolUseCard({ block }: Props) {
         </button>
         {expanded && (
           <pre className="px-3 pb-2 overflow-x-auto text-zinc-400 max-h-48 overflow-y-auto">
-            {JSON.stringify(block.input, null, 2)}
+            {displayInput}
           </pre>
         )}
       </div>

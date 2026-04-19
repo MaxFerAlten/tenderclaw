@@ -1,12 +1,24 @@
 from __future__ import annotations
 
-import sys, os
-ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, os.pardir))
-if ROOT not in sys.path:
-    sys.path.insert(0, ROOT)
+import pytest
 
+from backend.api import config as config_module
 from backend.schemas.sessions import SessionCreate
 from backend.services.session_store import session_store
+
+
+@pytest.fixture(autouse=True)
+def isolated_chat_storage(tmp_path):
+    config_snapshot = dict(config_module._global_config)
+    session_snapshot = dict(session_store._sessions)
+    config_module._global_config["chat_storage_path"] = str(tmp_path / "chat")
+    try:
+        yield
+    finally:
+        config_module._global_config.clear()
+        config_module._global_config.update(config_snapshot)
+        session_store._sessions.clear()
+        session_store._sessions.update(session_snapshot)
 
 
 def test_wave1_resume_minimal_roundtrip():

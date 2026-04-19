@@ -7,25 +7,25 @@ for external clients and plugins.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
 from backend.agents.registry import agent_registry
-from backend.schemas.tools import ToolSpec
 from backend.services.session_store import session_store
 from shared.sdk_errors import SessionNotFoundError
 from shared.sdk_types import (
-    AgentConfig,
     AgentManifest,
-    SDKExecuteRequest,
     SDKExecuteResponse,
     SDKSchema,
     StreamEvent,
     StreamEventType,
     ToolDefinition,
 )
+
+if TYPE_CHECKING:
+    from backend.schemas.tools import ToolSpec
 
 logger = logging.getLogger("tenderclaw.api.sdk")
 router = APIRouter()
@@ -81,8 +81,8 @@ async def get_agent(name: str) -> AgentManifest:
     """Return a specific agent manifest."""
     try:
         agent = agent_registry.get(name)
-    except ValueError:
-        raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=f"Agent '{name}' not found") from err
     return _agent_to_manifest(agent.model_dump())
 
 
@@ -160,7 +160,7 @@ async def sdk_stream(ws: WebSocket, session_id: str) -> None:
     await ws.accept()
 
     try:
-        session = session_store.get(session_id)
+        session_store.get(session_id)
     except SessionNotFoundError:
         await ws.send_json(
             StreamEvent(

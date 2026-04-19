@@ -78,14 +78,19 @@ class GatewayRequest(BaseModel):
     @classmethod
     def from_openai(cls, openai_req: Any, session_id: str | None = None) -> "GatewayRequest":
         """Build from an OpenAI-compatible ChatCompletionRequest."""
+        from backend.agents.registry import agent_registry
+
         messages = [
             GatewayMessage(role=m.role, content=m.content)
             for m in openai_req.messages
         ]
+        agent_name = openai_req.model
+        if not agent_name or not agent_registry.exists(agent_name):
+            agent_name = "sisyphus"
         return cls(
             transport="rest",
             session_id=session_id,
-            agent_name=openai_req.model,
+            agent_name=agent_name,
             messages=messages,
             stream=openai_req.stream,
         )

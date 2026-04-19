@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -155,8 +156,8 @@ class TestWSConnectionManager:
         mgr = WSConnectionManager()
         ws1 = MagicMock()
         ws2 = MagicMock()
-        mgr.connect(ws1, "sess_a")
-        mgr.connect(ws2, "sess_b")
+        asyncio.run(mgr.connect(ws1, "sess_a"))
+        asyncio.run(mgr.connect(ws2, "sess_b"))
         sessions = mgr.active_sessions()
         assert "sess_a" in sessions
         assert "sess_b" in sessions
@@ -165,8 +166,8 @@ class TestWSConnectionManager:
         from backend.api.ws import WSConnectionManager
         mgr = WSConnectionManager()
         ws1 = MagicMock()
-        mgr.connect(ws1, "sess_a")
-        mgr.disconnect(ws1, "sess_a")
+        asyncio.run(mgr.connect(ws1, "sess_a"))
+        asyncio.run(mgr.disconnect(ws1, "sess_a"))
         assert mgr.active_sessions() == []
 
 

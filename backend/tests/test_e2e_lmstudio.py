@@ -19,7 +19,13 @@ from pathlib import Path
 import httpx
 import pytest
 import websockets
-from playwright.async_api import async_playwright, expect
+
+playwright_async_api = pytest.importorskip(
+    "playwright.async_api",
+    reason="Playwright is required for UI e2e tests",
+)
+async_playwright = playwright_async_api.async_playwright
+expect = playwright_async_api.expect
 
 BACKEND = "http://localhost:7000"
 WS_BACKEND = "ws://localhost:7000"

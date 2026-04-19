@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from typing import Dict
 
 import httpx
 from fastapi import APIRouter
@@ -13,7 +12,7 @@ router = APIRouter()
 
 
 @router.get("/ollama", tags=["diagnostics"])
-async def ollama_health() -> Dict[str, str]:
+async def ollama_health() -> dict[str, str]:
     """Test connectivity to the local Ollama instance."""
     base = "http://localhost:11434/v1"
     try:
@@ -48,7 +47,7 @@ async def lmstudio_models(base_url: str | None = None) -> list[str]:
 
 
 @router.get("/lmstudio", tags=["diagnostics"])
-async def lmstudio_health(base_url: str | None = None) -> Dict[str, str]:
+async def lmstudio_health(base_url: str | None = None) -> dict[str, str]:
     """Test connectivity to LM Studio.
 
     Optionally pass ?base_url=http://host:port to test a custom address.
@@ -84,8 +83,8 @@ async def lmstudio_health(base_url: str | None = None) -> Dict[str, str]:
 @router.get("/openrouter/models", tags=["diagnostics"])
 async def openrouter_models() -> list[str]:
     """Return list of models available via OpenRouter."""
-    from backend.config import settings
     from backend.api.config import _global_config
+    from backend.config import settings
 
     key = settings.openrouter_api_key or _global_config.get("openrouter_api_key", "")
     if not key:
@@ -108,8 +107,8 @@ async def openrouter_models() -> list[str]:
 @router.get("/opencode/models", tags=["diagnostics"])
 async def opencode_models() -> list[str]:
     """Return list of models available via OpenCode."""
-    from backend.config import settings
     from backend.api.config import _global_config
+    from backend.config import settings
 
     key = settings.opencode_api_key or _global_config.get("opencode_api_key", "")
     if not key:
@@ -130,7 +129,7 @@ async def opencode_models() -> list[str]:
 
 
 @router.get("/llamacpp", tags=["diagnostics"])
-async def llamacpp_health(base_url: str | None = None) -> Dict[str, str]:
+async def llamacpp_health(base_url: str | None = None) -> dict[str, str]:
     """Test connectivity to llama.cpp server."""
     from backend.config import settings
 
@@ -180,7 +179,7 @@ async def llamacpp_models(base_url: str | None = None) -> list[str]:
 
 
 @router.get("/gpt4free", tags=["diagnostics"])
-async def gpt4free_health(base_url: str | None = None) -> Dict[str, str]:
+async def gpt4free_health(base_url: str | None = None) -> dict[str, str]:
     """Test connectivity to gpt4free server."""
     from backend.config import settings
 

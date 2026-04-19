@@ -102,7 +102,7 @@ export const useSettingsStore = create<SettingsStore>((set, _get) => ({
         xai_api_key: "",
         deepseek_api_key: "",
       }),
-    }).catch(() => {});
+    }).catch((err) => console.error("Failed to load settings:", err));
     set({
       providerStatus: Object.fromEntries(
         PROVIDER_IDS.map((p) => [p, { keySet: false, validated: false, error: "" }])

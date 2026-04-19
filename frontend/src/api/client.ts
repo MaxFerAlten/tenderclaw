@@ -27,10 +27,11 @@ export const api = {
 
   sessions: {
     list: () => request<{ sessions: unknown[] }>("/sessions"),
-    create: (body: { model?: string; working_directory?: string }) =>
+    create: (body: { model?: string; working_directory?: string }, signal?: AbortSignal) =>
       request<{ session_id: string }>("/sessions", {
         method: "POST",
         body: JSON.stringify(body),
+        signal,
       }),
     get: (id: string) => request<unknown>(`/sessions/${id}`),
     delete: (id: string) =>
