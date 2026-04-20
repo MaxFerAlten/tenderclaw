@@ -45,6 +45,7 @@ async def create_coordinator(req: CreateCoordinatorRequest) -> dict[str, Any]:
 async def list_coordinators() -> list[dict[str, Any]]:
     """List all coordinators."""
     from backend.orchestration.coordinator import CoordinatorManager
+    from backend.orchestration.coordinator_runner import ensure_task_trace
 
     return [
         {
@@ -59,6 +60,7 @@ async def list_coordinators() -> list[dict[str, Any]]:
                     "status": t.status,
                     "assignee": t.assignee,
                     "result": t.result,
+                    "trace": ensure_task_trace(t),
                 }
                 for t in c.tasks
             ],
@@ -72,6 +74,7 @@ async def list_coordinators() -> list[dict[str, Any]]:
 async def get_coordinator(coordinator_id: str) -> dict[str, Any]:
     """Get coordinator details."""
     from backend.orchestration.coordinator import CoordinatorManager
+    from backend.orchestration.coordinator_runner import ensure_task_trace
 
     coordinator = CoordinatorManager.get(coordinator_id)
     if not coordinator:
@@ -87,6 +90,7 @@ async def get_coordinator(coordinator_id: str) -> dict[str, Any]:
                 "status": t.status,
                 "assignee": t.assignee,
                 "result": t.result,
+                "trace": ensure_task_trace(t),
             }
             for t in coordinator.tasks
         ],
@@ -130,6 +134,19 @@ async def complete_task(coordinator_id: str, task_id: str, req: CompleteTaskRequ
     if not coordinator.complete_task(task_id, req.result):
         raise HTTPException(status_code=404, detail="Task not found")
     return {"status": "completed", "progress": coordinator.get_progress()}
+
+
+@router.post("/{coordinator_id}/run")
+async def run_coordinator(coordinator_id: str) -> dict[str, object]:
+    """Run pending tasks through the coordinator pipeline."""
+    from backend.orchestration.coordinator import CoordinatorManager
+    from backend.orchestration.coordinator_runner import run_pending_tasks
+
+    coordinator = CoordinatorManager.get(coordinator_id)
+    if not coordinator:
+        raise HTTPException(status_code=404, detail="Coordinator not found")
+    run = await run_pending_tasks(coordinator)
+    return {"run": run, "coordinator": await get_coordinator(coordinator_id)}
 
 
 @router.delete("/{coordinator_id}")

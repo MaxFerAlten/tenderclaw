@@ -15,7 +15,7 @@ import {
   ChevronDown,
 } from "lucide-react";
 import { SessionSummary } from "../../types/history";
-import { listSessions, deleteSession, exportAllSessions } from "../../api/historyApi";
+import { listSessions, deleteSession, deleteAllSessions, exportAllSessions } from "../../api/historyApi";
 import { useKeybindingContext } from "../../keybindings";
 
 export function HistoryScreen() {
@@ -28,6 +28,7 @@ export function HistoryScreen() {
   const [dateTo, setDateTo] = useState("");
   const [showFilters, setShowFilters] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deletingAll, setDeletingAll] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -100,6 +101,21 @@ export function HistoryScreen() {
     }
   };
 
+  const handleDeleteAll = async () => {
+    if (!confirm("Delete all saved sessions? This cannot be undone.")) return;
+    setDeletingAll(true);
+    try {
+      await deleteAllSessions();
+      setSessions([]);
+      setHasMore(false);
+      setOffset(0);
+    } catch (err) {
+      console.error("Failed to delete all sessions:", err);
+    } finally {
+      setDeletingAll(false);
+    }
+  };
+
   const handleSessionClick = (sessionId: string) => {
     navigate(`/history/${sessionId}`);
   };
@@ -132,6 +148,15 @@ export function HistoryScreen() {
             <span>Back to Chat</span>
           </Link>
           <div className="flex items-center gap-3">
+            <button
+              onClick={handleDeleteAll}
+              disabled={deletingAll || loading}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-red-500/10 text-red-300 hover:bg-red-500/20 hover:text-red-200 rounded-lg transition-colors disabled:opacity-40"
+              title="Delete all saved sessions"
+            >
+              {deletingAll ? <Loader className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+              Delete All
+            </button>
             <button
               onClick={handleExportAll}
               disabled={exporting || sessions.length === 0}

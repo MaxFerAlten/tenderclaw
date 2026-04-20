@@ -1,13 +1,14 @@
 """Remote bridge for TenderClaw — enables remote connections."""
 
-from dataclasses import dataclass, field
-from enum import Enum
 import uuid
-import jwt
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from enum import StrEnum
+
+import jwt
 
 
-class BridgeState(str, Enum):
+class BridgeState(StrEnum):
     DISCONNECTED = "disconnected"
     CONNECTING = "connecting"
     CONNECTED = "connected"

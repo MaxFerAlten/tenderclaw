@@ -321,6 +321,15 @@ class SessionHistoryService:
             logger.error("Failed to delete session %s: %s", session_id, exc)
             return False
 
+    def delete_all_sessions(self) -> int:
+        """Delete every saved session from disk and return the number removed."""
+        deleted = 0
+        for session in self._load_all_sessions():
+            session_id = session.get("session_id")
+            if isinstance(session_id, str) and self.delete_session(session_id):
+                deleted += 1
+        return deleted
+
     def export_session(self, session_id: str) -> dict | None:
         """Export a single session to JSON."""
         detail = self.get_session_detail(session_id)

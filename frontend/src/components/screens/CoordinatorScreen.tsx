@@ -1,82 +1,74 @@
 /** CoordinatorScreen — manage multiple agent tasks. */
 
 import { useState, useEffect } from "react";
-import { Plus, CheckCircle, Circle, Loader } from "lucide-react";
-
-interface Task {
-  id: string;
-  description: string;
-  status: "pending" | "running" | "completed" | "failed";
-  assignee: string | null;
-  result: string | null;
-}
-
-interface Coordinator {
-  id: string;
-  name: string;
-  state: string;
-  tasks: Task[];
-  progress: {
-    total: number;
-    completed: number;
-    running: number;
-    pending: number;
-    percent: number;
-  };
-}
-
-const emptyProgress: Coordinator["progress"] = {
-  total: 0,
-  completed: 0,
-  running: 0,
-  pending: 0,
-  percent: 0,
-};
+import { Plus, Loader, Play } from "lucide-react";
+import {
+  addCoordinatorTask,
+  createCoordinator as createCoordinatorRequest,
+  listCoordinators,
+  runCoordinator as runCoordinatorRequest,
+  type Coordinator,
+} from "../../api/coordinatorApi";
+import { CoordinatorTaskItem } from "./CoordinatorTaskItem";
 
 export function CoordinatorScreen() {
   const [coordinators, setCoordinators] = useState<Coordinator[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [newTask, setNewTask] = useState("");
+  const [runningId, setRunningId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     fetchCoordinators();
   }, []);
 
   const fetchCoordinators = async () => {
-    const res = await fetch("/api/coordinator");
-    if (res.ok) {
-      const data = await res.json();
-      setCoordinators(Array.isArray(data) ? data.map(normalizeCoordinator) : []);
+    try {
+      setCoordinators(await listCoordinators());
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load coordinators");
     }
   };
 
   const createCoordinator = async () => {
     const name = prompt("Coordinator name:");
     if (!name) return;
-    const res = await fetch("/api/coordinator", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name }),
-    });
-    if (res.ok) {
+    try {
+      await createCoordinatorRequest(name);
       fetchCoordinators();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to create coordinator");
     }
   };
 
   const addTask = async (coordinatorId: string) => {
     if (!newTask.trim()) return;
-    const res = await fetch(`/api/coordinator/${coordinatorId}/tasks`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ description: newTask }),
-    });
-    if (res.ok) {
+    try {
+      await addCoordinatorTask(coordinatorId, newTask);
       setNewTask("");
       fetchCoordinators();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to add task");
+    }
+  };
+
+  const runCoordinator = async (coordinatorId: string) => {
+    setRunningId(coordinatorId);
+    try {
+      const updated = await runCoordinatorRequest(coordinatorId);
+      setCoordinators((items) => items.map((item) => (item.id === updated.id ? updated : item)));
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to run coordinator");
+    } finally {
+      setRunningId(null);
     }
   };
 
   const current = coordinators.find((c) => c.id === selected);
+  const currentIsRunning = current ? runningId === current.id : false;
+  const currentPending = current?.progress.pending ?? 0;
 
   return (
     <div className="flex h-full">
@@ -110,8 +102,22 @@ export function CoordinatorScreen() {
           <>
             <div className="flex items-center justify-between mb-6">
               <h1 className="text-xl font-bold text-zinc-100">{current.name}</h1>
-              <div className="text-sm text-zinc-400">
-                {current.progress.percent}% complete
+              <div className="flex items-center gap-3">
+                <div className="text-sm text-zinc-400">
+                  {current.progress.percent}% complete
+                </div>
+                <button
+                  onClick={() => runCoordinator(current.id)}
+                  disabled={currentIsRunning || currentPending === 0}
+                  className="flex h-9 items-center gap-2 rounded-lg bg-emerald-600 px-3 text-sm font-medium text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:bg-zinc-800 disabled:text-zinc-500"
+                >
+                  {currentIsRunning ? (
+                    <Loader className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Play className="w-4 h-4" />
+                  )}
+                  Run
+                </button>
               </div>
             </div>
 
@@ -143,29 +149,16 @@ export function CoordinatorScreen() {
               </button>
             </div>
 
+            {error && (
+              <div className="mb-4 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">
+                {error}
+              </div>
+            )}
+
             {/* Tasks */}
             <div className="space-y-2">
               {current.tasks.map((task) => (
-                <div key={task.id} className="flex items-center gap-3 p-3 bg-zinc-900 rounded-lg">
-                  {task.status === "completed" ? (
-                    <CheckCircle className="w-5 h-5 text-green-400" />
-                  ) : task.status === "running" ? (
-                    <Loader className="w-5 h-5 text-blue-400 animate-spin" />
-                  ) : (
-                    <Circle className="w-5 h-5 text-zinc-500" />
-                  )}
-                  <div className="flex-1">
-                    <p className={`text-sm ${task.status === "completed" ? "text-zinc-500 line-through" : "text-zinc-200"}`}>
-                      {task.description}
-                    </p>
-                    {task.assignee && (
-                      <p className="text-xs text-zinc-500">Assigned to: {task.assignee}</p>
-                    )}
-                  </div>
-                  {task.result && (
-                    <p className="text-xs text-zinc-400 max-w-xs truncate">{task.result}</p>
-                  )}
-                </div>
+                <CoordinatorTaskItem key={task.id} task={task} />
               ))}
             </div>
           </>
@@ -177,14 +170,4 @@ export function CoordinatorScreen() {
       </div>
     </div>
   );
-}
-
-function normalizeCoordinator(coordinator: Partial<Coordinator>): Coordinator {
-  return {
-    id: coordinator.id ?? "",
-    name: coordinator.name ?? "Untitled coordinator",
-    state: coordinator.state ?? "idle",
-    tasks: Array.isArray(coordinator.tasks) ? coordinator.tasks : [],
-    progress: coordinator.progress ?? emptyProgress,
-  };
 }

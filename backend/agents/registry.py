@@ -7,7 +7,6 @@ Acts as the source of truth for all available agent roles.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 from backend.schemas.agents import AgentCategory, AgentCost, AgentDefinition, AgentMode
 

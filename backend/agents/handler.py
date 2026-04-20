@@ -6,14 +6,15 @@ Tool execution is delegated to core.tool_runner for permission gating.
 
 from __future__ import annotations
 
-import json
 import logging
 import uuid
-from typing import Any, AsyncIterator
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
 
 from backend.agents.registry import agent_registry
 from backend.core.streaming import StreamCollector
-from backend.schemas.messages import Message, Role, ToolResultBlock
 from backend.services.model_router import model_router
 from backend.tools.registry import tool_registry
 

@@ -102,6 +102,12 @@ export async function deleteSession(sessionId: string): Promise<void> {
   if (!res.ok) throw new Error("Failed to delete session");
 }
 
+export async function deleteAllSessions(): Promise<{ deleted: number }> {
+  const res = await fetch(API_BASE, { method: "DELETE" });
+  if (!res.ok) throw new Error("Failed to delete all sessions");
+  return res.json();
+}
+
 export async function exportSession(sessionId: string): Promise<unknown> {
   const res = await fetch(`${API_BASE}/export/${sessionId}`, { method: "POST" });
   if (!res.ok) throw new Error("Failed to export session");

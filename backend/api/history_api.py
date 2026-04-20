@@ -59,6 +59,12 @@ class DeleteResponse(BaseModel):
     message: str
 
 
+class DeleteAllResponse(BaseModel):
+    status: str
+    deleted: int
+    message: str
+
+
 @router.get("", response_model=HistoryPageResponse)
 async def get_sessions(
     limit: int = Query(20, ge=1, le=100),
@@ -90,6 +96,17 @@ async def list_sessions(
         date_to=date_to,
     )
     return HistoryListResponse(sessions=sessions, total=len(sessions))
+
+
+@router.delete("", response_model=DeleteAllResponse)
+async def delete_all_sessions() -> DeleteAllResponse:
+    """Delete all sessions from history."""
+    deleted = session_history_service.delete_all_sessions()
+    return DeleteAllResponse(
+        status="ok",
+        deleted=deleted,
+        message=f"{deleted} sessions deleted",
+    )
 
 
 @router.get("/{session_id}", response_model=SessionDetail)

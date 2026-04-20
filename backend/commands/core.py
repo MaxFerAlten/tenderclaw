@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 class InitDeepCommand(BaseCommand):
     """
     Generate hierarchical AGENTS.md files throughout the project.
-    
+
     Creates directory-specific context files that agents automatically read.
     """
 
